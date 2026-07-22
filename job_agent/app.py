@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import threading
 import time
+from mimetypes import guess_type
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from . import applications, automation, emailer, jobs, profile
-from .config import WEB_DIR
+from .config import GENERATED_DIR, WEB_DIR
 from .db import all_settings, db_info, init_db, log, rows, set_setting
 from .latex import available_latex_engine
 
@@ -40,6 +41,9 @@ class Handler(SimpleHTTPRequestHandler):
                 }
             )
             return
+        if path == "/api/applications/artifact":
+            self.send_application_artifact()
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -67,6 +71,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json({"ok": True})
             elif path == "/api/applications/apply":
                 self.json(automation.apply_application(int(payload["application_id"])))
+            elif path == "/api/applications/compile":
+                self.json(applications.recompile_application(int(payload["application_id"])))
             elif path == "/api/rules":
                 self.json({"id": applications.save_answer_rule(str(payload["question"]), str(payload["answer"]))})
             elif path == "/api/email/send":
@@ -88,6 +94,41 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_application_artifact(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            application_id = int(query.get("application_id", [""])[0])
+        except ValueError:
+            self.send_error(400, "Invalid application ID")
+            return
+        kind = query.get("kind", [""])[0]
+        if kind not in {"pdf", "tex"}:
+            self.send_error(400, "Artifact kind must be pdf or tex")
+            return
+        app = applications.get_application(application_id)
+        if not app:
+            self.send_error(404, "Application not found")
+            return
+        field = "resume_pdf_path" if kind == "pdf" else "resume_tex_path"
+        artifact = Path(str(app.get(field) or "")).resolve()
+        generated_root = GENERATED_DIR.resolve()
+        if generated_root not in artifact.parents or not artifact.is_file():
+            self.send_error(404, "Artifact not found")
+            return
+        if artifact.suffix.lower() != f".{kind}":
+            self.send_error(400, "Artifact type mismatch")
+            return
+        data = artifact.read_bytes()
+        content_type = guess_type(artifact.name)[0] or "application/octet-stream"
+        disposition = "inline" if kind == "pdf" else "attachment"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'{disposition}; filename="application-{application_id}-resume.{kind}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(data)
 

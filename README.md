@@ -9,7 +9,8 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - PDF, DOCX, and text document ingestion from `docs/`.
 - A source-grounded structured candidate profile with contact, skills, education, certifications, and evidence.
 - Manual job entry and configurable career-page scanning.
-- Tailored LaTeX resume source generation for each job.
+- Tailored LaTeX resume generation with validated PDF output for each job.
+- Dashboard PDF preview, LaTeX download, recompile controls, and compiler diagnostics.
 - Application package tracking with review, approval, and submitted states.
 - Saved answer rules for repeated application-form questions.
 - Email sending limits and SMTP-backed sending endpoint.
@@ -18,10 +19,18 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 ## What is intentionally guarded
 
 - Browser submission is queued until Playwright and site-specific adapters are installed.
-- PDF compilation needs a local TeX engine such as `tectonic`, `pdflatex`, `xelatex`, or `lualatex`.
+- PDF compilation reports a clear blocked state when no supported local TeX engine is available.
 - AI writing is designed for active Codex/ChatGPT operation in v1, so the local backend does not require OpenAI API billing.
 
 ## Run
+
+Install the system tools used for reliable compilation and visual PDF checks on macOS:
+
+```bash
+brew install tectonic poppler
+```
+
+Then install the Python dependencies and start the app:
 
 ```bash
 npm run setup
@@ -53,6 +62,12 @@ Run the core ingestion and application lifecycle tests with:
 
 ```bash
 npm test
+```
+
+Run the compiler success and failure-path test independently with:
+
+```bash
+npm run test:latex
 ```
 
 ## Email setup

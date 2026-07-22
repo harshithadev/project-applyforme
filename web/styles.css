@@ -46,6 +46,25 @@ button.secondary {
   color: var(--accent);
 }
 
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 9px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: white;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.button-link.secondary {
+  background: white;
+  color: var(--accent);
+}
+
 button.warn {
   background: var(--accent-2);
   border-color: var(--accent-2);
@@ -352,6 +371,58 @@ main {
   white-space: nowrap;
 }
 
+.compile-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 10px 0;
+  border-block: 1px solid var(--line);
+}
+
+.compile-summary p {
+  margin: 4px 0 0;
+}
+
+.compile-status.compiled {
+  background: #e5f4ed;
+  color: #176344;
+}
+
+.compile-status.failed,
+.compile-status.invalid,
+.compile-status.timeout {
+  background: #fbeaea;
+  color: var(--danger);
+}
+
+.compile-status.unavailable,
+.compile-status.pending {
+  background: #fff3d6;
+  color: var(--warning);
+}
+
+.compile-log {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.compile-log summary {
+  cursor: pointer;
+}
+
+.compile-log pre {
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #f4f6f8;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
 .score {
   color: var(--accent-2);
   font-weight: 700;
@@ -457,7 +528,8 @@ textarea {
 
   .topbar,
   .panel-head,
-  .card-head {
+  .card-head,
+  .compile-summary {
     align-items: stretch;
     flex-direction: column;
   }

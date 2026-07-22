@@ -38,6 +38,19 @@ function formatMode(mode) {
   return String(mode || "review").replaceAll("_", " ");
 }
 
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!bytes) return "0 bytes";
+  if (bytes < 1024) return `${bytes} bytes`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function compileStatusClass(status) {
+  return ["compiled", "failed", "invalid", "timeout", "unavailable", "pending"].includes(status)
+    ? status
+    : "pending";
+}
+
 async function loadState() {
   state.data = await api("/api/state");
   render();
@@ -161,7 +174,16 @@ function renderApplications(apps) {
     target.innerHTML = `<div class="empty">No application packages drafted yet.</div>`;
     return;
   }
-  target.innerHTML = apps.map((app) => `
+  target.innerHTML = apps.map((app) => {
+    const compileStatus = String(app.resume_compile_status || "pending");
+    const compileMeta = compileStatus === "compiled"
+      ? `${Number(app.resume_pdf_pages || 0)} page${Number(app.resume_pdf_pages || 0) === 1 ? "" : "s"} · ${formatBytes(app.resume_pdf_bytes)} · ${escapeHtml(app.resume_compile_engine)}`
+      : escapeHtml(app.resume_compile_message || "PDF has not been compiled yet.");
+    const artifactBase = `/api/applications/artifact?application_id=${encodeURIComponent(app.id)}`;
+    const compilerDetails = compileStatus !== "compiled" && app.resume_compile_log
+      ? `<details class="compile-log"><summary>Compiler details</summary><pre>${escapeHtml(app.resume_compile_log)}</pre></details>`
+      : "";
+    return `
     <article class="app-card">
       <div class="card-head">
         <div>
@@ -170,15 +192,26 @@ function renderApplications(apps) {
         </div>
         <span class="status">${escapeHtml(app.status)}</span>
       </div>
-      <p class="mono">${escapeHtml(app.resume_tex_path || "No LaTeX file generated")}</p>
+      <div class="compile-summary">
+        <div>
+          <strong>Tailored resume</strong>
+          <p class="meta">${compileMeta}</p>
+        </div>
+        <span class="status compile-status ${compileStatusClass(compileStatus)}">${escapeHtml(compileStatus)}</span>
+      </div>
+      ${compilerDetails}
       <p>${escapeHtml((app.cover_letter || "").slice(0, 320))}</p>
       <div class="card-actions">
+        ${app.resume_pdf_path ? `<a class="button-link" href="${artifactBase}&kind=pdf" target="_blank" rel="noreferrer">Open PDF</a>` : ""}
+        ${app.resume_tex_path ? `<a class="button-link secondary" href="${artifactBase}&kind=tex">Download LaTeX</a>` : ""}
+        <button data-action="compile" data-app="${app.id}" class="secondary">Recompile PDF</button>
         <button data-action="approve" data-app="${app.id}">Approve</button>
         <button data-action="apply" data-app="${app.id}" class="warn">Apply</button>
         <button data-action="submitted" data-app="${app.id}" class="secondary">Mark submitted</button>
       </div>
     </article>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function renderRules(rules) {
@@ -248,6 +281,12 @@ async function handleAction(action, button) {
         body: JSON.stringify({ application_id: Number(button.dataset.app) })
       });
       toast(result.message || "Apply action queued.");
+    } else if (action === "compile") {
+      const result = await api("/api/applications/compile", {
+        method: "POST",
+        body: JSON.stringify({ application_id: Number(button.dataset.app) })
+      });
+      toast(result.resume_compile_message || "Resume compilation finished.");
     }
     await loadState();
   } catch (error) {

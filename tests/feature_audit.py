@@ -57,6 +57,15 @@ def request_json(url: str, payload: dict[str, object] | None = None) -> dict[str
         return json.loads(response.read().decode("utf-8"))
 
 
+def request_bytes(url: str) -> tuple[bytes, str, str]:
+    with urllib.request.urlopen(url, timeout=5) as response:
+        return (
+            response.read(),
+            response.headers.get_content_type(),
+            response.headers.get("Content-Disposition", ""),
+        )
+
+
 class QuietAppHandler:
     @staticmethod
     def build(handler: type[BaseHTTPRequestHandler]) -> type[BaseHTTPRequestHandler]:
@@ -168,8 +177,17 @@ def main() -> None:
 
         engine = available_latex_engine()
         pdf_path = str(app_record["resume_pdf_path"] or "")
-        if engine and pdf_path and Path(pdf_path).exists():
-            record("PASS", "Reliable LaTeX PDF compilation", f"Compiled successfully with {engine}.")
+        if (
+            engine
+            and app_record["resume_compile_status"] == "compiled"
+            and int(app_record["resume_pdf_pages"]) >= 1
+            and int(app_record["resume_pdf_bytes"]) >= 1_000
+            and pdf_path
+            and Path(pdf_path).exists()
+        ):
+            record("PASS", "Reliable LaTeX PDF compilation", str(app_record["resume_compile_message"]))
+        elif engine:
+            record("FAIL", "Reliable LaTeX PDF compilation", str(app_record["resume_compile_message"]))
         else:
             record("BLOCKED", "Reliable LaTeX PDF compilation", "No TeX engine is installed, so only .tex output is produced.")
 
@@ -258,10 +276,43 @@ def main() -> None:
                     "description": "Python API",
                 },
             )
-        if state.get("settings") and created.get("id"):
+            compiled = request_json(
+                f"{dashboard_url}/api/applications/compile",
+                {"application_id": int(app_record["id"])},
+            )
+            pdf_body, pdf_type, pdf_disposition = request_bytes(
+                f"{dashboard_url}/api/applications/artifact?application_id={app_record['id']}&kind=pdf"
+            )
+            tex_body, tex_type, tex_disposition = request_bytes(
+                f"{dashboard_url}/api/applications/artifact?application_id={app_record['id']}&kind=tex"
+            )
+        api_ok = bool(state.get("settings") and created.get("id"))
+        artifact_ok = bool(
+            compiled.get("resume_compile_status") == "compiled"
+            and pdf_body.startswith(b"%PDF")
+            and pdf_type == "application/pdf"
+            and "inline" in pdf_disposition
+            and b"\\documentclass" in tex_body
+            and tex_type in {"application/x-tex", "text/x-tex", "text/plain"}
+            and "attachment" in tex_disposition
+        )
+        if api_ok:
             record("PASS", "Local dashboard API", "The website can read state and trigger write operations.")
         else:
-            record("FAIL", "Local dashboard API", "State or job creation endpoint failed.")
+            record(
+                "FAIL",
+                "Local dashboard API",
+                f"state={bool(state.get('settings'))}, created_id={created.get('id')}",
+            )
+        if artifact_ok:
+            record("PASS", "Resume artifact access", "Validated PDFs open inline and LaTeX sources download through scoped endpoints.")
+        else:
+            record(
+                "FAIL",
+                "Resume artifact access",
+                f"compile={compiled.get('resume_compile_status')}, pdf=({pdf_type}, {pdf_disposition}, {pdf_body[:4]!r}), "
+                f"tex=({tex_type}, {tex_disposition}, {tex_body[:20]!r})",
+            )
 
         original_settings = app.all_settings
         original_discover = app.jobs.discover_jobs

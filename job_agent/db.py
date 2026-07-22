@@ -85,6 +85,13 @@ def init_db() -> None:
               status TEXT NOT NULL DEFAULT 'drafted',
               resume_tex_path TEXT NOT NULL DEFAULT '',
               resume_pdf_path TEXT NOT NULL DEFAULT '',
+              resume_compile_status TEXT NOT NULL DEFAULT 'pending',
+              resume_compile_engine TEXT NOT NULL DEFAULT '',
+              resume_compile_message TEXT NOT NULL DEFAULT '',
+              resume_compile_log TEXT NOT NULL DEFAULT '',
+              resume_pdf_pages INTEGER NOT NULL DEFAULT 0,
+              resume_pdf_bytes INTEGER NOT NULL DEFAULT 0,
+              resume_compiled_at TEXT NOT NULL DEFAULT '',
               cover_letter TEXT NOT NULL DEFAULT '',
               statements TEXT NOT NULL DEFAULT '[]',
               email_subject TEXT NOT NULL DEFAULT '',
@@ -137,6 +144,21 @@ def init_db() -> None:
         for name, definition in document_columns.items():
             if name not in existing_columns:
                 conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {definition}")
+        application_columns = {
+            "resume_compile_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "resume_compile_engine": "TEXT NOT NULL DEFAULT ''",
+            "resume_compile_message": "TEXT NOT NULL DEFAULT ''",
+            "resume_compile_log": "TEXT NOT NULL DEFAULT ''",
+            "resume_pdf_pages": "INTEGER NOT NULL DEFAULT 0",
+            "resume_pdf_bytes": "INTEGER NOT NULL DEFAULT 0",
+            "resume_compiled_at": "TEXT NOT NULL DEFAULT ''",
+        }
+        existing_application_columns = {
+            item["name"] for item in conn.execute("PRAGMA table_info(applications)").fetchall()
+        }
+        for name, definition in application_columns.items():
+            if name not in existing_application_columns:
+                conn.execute(f"ALTER TABLE applications ADD COLUMN {name} {definition}")
         defaults = {
             "mode": "review",
             "role_keywords": "software engineer, developer, full stack",

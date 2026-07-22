@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from .db import connect, log, now_iso, row, rows, setting
-from .latex import application_dir, compile_pdf, extract_keywords, generate_resume_tex
+from .latex import CompilationResult, application_dir, compile_pdf, extract_keywords, generate_resume_tex
 from .profile import profile_text
 
 
@@ -78,7 +79,7 @@ def draft_application(job_id: int, mode: str | None = None) -> dict[str, object]
     app_dir = application_dir(application_id)
     tex_path = app_dir / "resume.tex"
     resume_tex = generate_resume_tex(profile, job, tex_path)
-    resume_pdf = compile_pdf(tex_path)
+    compilation = compile_pdf(tex_path)
     cover = generate_cover_letter(job, profile)
     statements = generate_statements(job)
     email_subject, email_body = generate_email(job)
@@ -86,14 +87,70 @@ def draft_application(job_id: int, mode: str | None = None) -> dict[str, object]
         conn.execute(
             """
             UPDATE applications
-            SET resume_tex_path = ?, resume_pdf_path = ?, cover_letter = ?, statements = ?,
-                email_subject = ?, email_body = ?, updated_at = ?
+            SET resume_tex_path = ?, resume_pdf_path = ?, resume_compile_status = ?,
+                resume_compile_engine = ?, resume_compile_message = ?, resume_compile_log = ?,
+                resume_pdf_pages = ?, resume_pdf_bytes = ?, resume_compiled_at = ?,
+                cover_letter = ?, statements = ?, email_subject = ?, email_body = ?, updated_at = ?
             WHERE id = ?
             """,
-            (resume_tex, resume_pdf, cover, json.dumps(statements), email_subject, email_body, now_iso(), application_id),
+            (
+                resume_tex,
+                compilation.pdf_path,
+                compilation.status,
+                compilation.engine,
+                compilation.message,
+                compilation.compiler_log,
+                compilation.page_count,
+                compilation.size_bytes,
+                now_iso(),
+                cover,
+                json.dumps(statements),
+                email_subject,
+                email_body,
+                now_iso(),
+                application_id,
+            ),
         )
         conn.execute("UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?", ("drafted", now_iso(), job_id))
     log(f"Drafted application package for {job['title']} at {job['company']}.", meta={"application_id": application_id})
+    return get_application(application_id) or {}
+
+
+def _save_compilation(application_id: int, compilation: CompilationResult) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE applications
+            SET resume_pdf_path = ?, resume_compile_status = ?, resume_compile_engine = ?,
+                resume_compile_message = ?, resume_compile_log = ?, resume_pdf_pages = ?,
+                resume_pdf_bytes = ?, resume_compiled_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                compilation.pdf_path,
+                compilation.status,
+                compilation.engine,
+                compilation.message,
+                compilation.compiler_log,
+                compilation.page_count,
+                compilation.size_bytes,
+                now_iso(),
+                now_iso(),
+                application_id,
+            ),
+        )
+
+
+def recompile_application(application_id: int) -> dict[str, object]:
+    app = get_application(application_id)
+    if not app:
+        raise ValueError(f"Application {application_id} does not exist")
+    tex_path = Path(str(app["resume_tex_path"])).resolve()
+    expected_dir = application_dir(application_id).resolve()
+    if tex_path.parent != expected_dir or tex_path.name != "resume.tex":
+        raise ValueError("Application LaTeX path is outside its generated directory")
+    compilation = compile_pdf(tex_path)
+    _save_compilation(application_id, compilation)
     return get_application(application_id) or {}
 
 
