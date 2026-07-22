@@ -48,6 +48,18 @@ def init_db() -> None:
               kind TEXT NOT NULL DEFAULT 'source',
               content TEXT NOT NULL,
               summary TEXT NOT NULL DEFAULT '',
+              sha256 TEXT NOT NULL DEFAULT '',
+              extractor TEXT NOT NULL DEFAULT '',
+              ingest_status TEXT NOT NULL DEFAULT 'ready',
+              ingest_error TEXT NOT NULL DEFAULT '',
+              size_bytes INTEGER NOT NULL DEFAULT 0,
+              metadata TEXT NOT NULL DEFAULT '{}',
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS candidate_profiles (
+              id INTEGER PRIMARY KEY CHECK(id = 1),
+              profile_json TEXT NOT NULL DEFAULT '{}',
               updated_at TEXT NOT NULL
             );
 
@@ -113,6 +125,18 @@ def init_db() -> None:
             );
             """
         )
+        document_columns = {
+            "sha256": "TEXT NOT NULL DEFAULT ''",
+            "extractor": "TEXT NOT NULL DEFAULT ''",
+            "ingest_status": "TEXT NOT NULL DEFAULT 'ready'",
+            "ingest_error": "TEXT NOT NULL DEFAULT ''",
+            "size_bytes": "INTEGER NOT NULL DEFAULT 0",
+            "metadata": "TEXT NOT NULL DEFAULT '{}'",
+        }
+        existing_columns = {item["name"] for item in conn.execute("PRAGMA table_info(documents)").fetchall()}
+        for name, definition in document_columns.items():
+            if name not in existing_columns:
+                conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {definition}")
         defaults = {
             "mode": "review",
             "role_keywords": "software engineer, developer, full stack",

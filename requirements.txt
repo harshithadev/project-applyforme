@@ -1,5 +1,1 @@
-# The MVP runs on Python's standard library.
-# Optional later:
-# playwright
-# beautifulsoup4
-# pypdf
+pypdf>=6.0,<7.0

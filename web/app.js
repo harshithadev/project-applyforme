@@ -58,6 +58,7 @@ function render() {
   $("#jobQueueMeta").textContent = `${data.jobs.length} tracked`;
 
   renderDocs(data.profile.documents);
+  renderStructuredProfile(data.profile.structured || {});
   renderEvents("#recentEvents", data.events.slice(0, 8));
   renderEvents("#logsList", data.events);
   renderJobs(data.jobs);
@@ -69,16 +70,50 @@ function render() {
 function renderDocs(docs) {
   const target = $("#docsList");
   if (!docs.length) {
-    target.innerHTML = `<div class="empty">Add .txt, .md, .tex, or .csv files to docs/, then ingest.</div>`;
+    target.innerHTML = `<div class="empty">Add PDF, DOCX, or text files to docs/, then ingest.</div>`;
     return;
   }
   target.innerHTML = docs.map((doc) => `
-    <div class="doc">
-      <strong>${escapeHtml(doc.name)}</strong>
+    <div class="doc ${doc.ingest_status === "error" ? "document-error" : ""}">
+      <div class="doc-heading">
+        <strong>${escapeHtml(doc.name)}</strong>
+        <span class="status">${escapeHtml(doc.kind || "source")}</span>
+      </div>
       <p class="meta mono">${escapeHtml(doc.path)}</p>
-      <p>${escapeHtml(String(doc.summary || "").split("sha256:")[0].trim())}</p>
+      ${doc.ingest_status === "error"
+        ? `<p class="error-text">${escapeHtml(doc.ingest_error || "Extraction failed")}</p>`
+        : `<p>${escapeHtml(doc.summary || "")}</p>`}
+      <p class="meta">${escapeHtml(doc.extractor || "unknown extractor")} · ${Number(doc.size_bytes || 0).toLocaleString()} bytes</p>
     </div>
   `).join("");
+}
+
+function renderStructuredProfile(profile) {
+  const target = $("#structuredProfile");
+  const contact = profile.contact || {};
+  const groups = [
+    ["Contact", [...(contact.emails || []), ...(contact.phones || []), ...(contact.links || [])]],
+    ["Skills", profile.skills || []],
+    ["Education", profile.education || []],
+    ["Certifications", profile.certifications || []],
+    ["Evidence highlights", profile.highlights || []]
+  ];
+  const hasContent = profile.name || groups.some(([, values]) => values.length);
+  if (!hasContent) {
+    target.innerHTML = `<div class="empty">Ingest a resume, transcript, or portfolio to build your profile.</div>`;
+    return;
+  }
+  target.innerHTML = `
+    ${profile.name ? `<div class="profile-name"><span>Candidate</span><strong>${escapeHtml(profile.name)}</strong></div>` : ""}
+    ${groups.map(([label, values]) => `
+      <section class="profile-group">
+        <h4>${escapeHtml(label)}</h4>
+        ${values.length
+          ? `<ul>${values.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul>`
+          : `<p class="meta">No evidence found.</p>`}
+      </section>
+    `).join("")}
+  `;
 }
 
 function renderEvents(selector, events) {

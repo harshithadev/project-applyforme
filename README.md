@@ -6,7 +6,8 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 
 - Local browser dashboard at `http://127.0.0.1:8787`.
 - SQLite tracker in `data/applyforme.sqlite3`.
-- Source document ingestion from `docs/`.
+- PDF, DOCX, and text document ingestion from `docs/`.
+- A source-grounded structured candidate profile with contact, skills, education, certifications, and evidence.
 - Manual job entry and configurable career-page scanning.
 - Tailored LaTeX resume source generation for each job.
 - Application package tracking with review, approval, and submitted states.
@@ -23,6 +24,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 ## Run
 
 ```bash
+npm run setup
 npm run dev
 ```
 
@@ -36,14 +38,22 @@ http://127.0.0.1:8787
 
 Add readable source files to `docs/`, then click **Ingest docs** in the dashboard.
 
-The dependency-free MVP reads:
+Supported source formats:
 
 - `.txt`
 - `.md`
 - `.tex`
 - `.csv`
+- `.pdf` with embedded text
+- `.docx`
 
-PDF/DOCX parsing can be added later with optional Python libraries.
+Files are classified from their names, tracked by content hash, and re-ingested only when changed. Removed files are also removed from the local candidate profile. Image-only PDFs are reported as requiring OCR rather than being silently ignored.
+
+Run the core ingestion and application lifecycle tests with:
+
+```bash
+npm test
+```
 
 ## Email setup
 

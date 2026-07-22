@@ -4,11 +4,13 @@
   "private": true,
   "description": "Local-first Codex-operated job application agent with LaTeX resume generation.",
   "scripts": {
-    "dev": "python3 -m job_agent.app",
-    "init": "python3 -m job_agent.cli init",
-    "ingest-docs": "python3 -m job_agent.cli ingest-docs",
-    "scan-jobs": "python3 -m job_agent.cli scan-jobs",
-    "test": "python3 tests/smoke.py",
-    "test:features": "python3 tests/feature_audit.py"
+    "setup": "python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt",
+    "dev": "./scripts/python -m job_agent.app",
+    "init": "./scripts/python -m job_agent.cli init",
+    "ingest-docs": "./scripts/python -m job_agent.cli ingest-docs",
+    "scan-jobs": "./scripts/python -m job_agent.cli scan-jobs",
+    "test": "./scripts/python tests/smoke.py && ./scripts/python tests/document_ingestion.py",
+    "test:documents": "./scripts/python tests/document_ingestion.py",
+    "test:features": "./scripts/python tests/feature_audit.py"
   }
 }
