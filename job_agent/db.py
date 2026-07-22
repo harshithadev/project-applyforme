@@ -74,7 +74,16 @@ def init_db() -> None:
               status TEXT NOT NULL DEFAULT 'new',
               score INTEGER NOT NULL DEFAULT 0,
               posted_at TEXT,
+              external_id TEXT NOT NULL DEFAULT '',
+              source_key TEXT NOT NULL DEFAULT '',
+              fingerprint TEXT NOT NULL DEFAULT '',
+              apply_url TEXT NOT NULL DEFAULT '',
+              workplace_type TEXT NOT NULL DEFAULT '',
+              match_reasons TEXT NOT NULL DEFAULT '[]',
+              metadata TEXT NOT NULL DEFAULT '{}',
               discovered_at TEXT NOT NULL,
+              last_seen_at TEXT NOT NULL DEFAULT '',
+              description_fetched_at TEXT NOT NULL DEFAULT '',
               updated_at TEXT NOT NULL
             );
 
@@ -144,6 +153,25 @@ def init_db() -> None:
         for name, definition in document_columns.items():
             if name not in existing_columns:
                 conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {definition}")
+        job_columns = {
+            "external_id": "TEXT NOT NULL DEFAULT ''",
+            "source_key": "TEXT NOT NULL DEFAULT ''",
+            "fingerprint": "TEXT NOT NULL DEFAULT ''",
+            "apply_url": "TEXT NOT NULL DEFAULT ''",
+            "workplace_type": "TEXT NOT NULL DEFAULT ''",
+            "match_reasons": "TEXT NOT NULL DEFAULT '[]'",
+            "metadata": "TEXT NOT NULL DEFAULT '{}'",
+            "last_seen_at": "TEXT NOT NULL DEFAULT ''",
+            "description_fetched_at": "TEXT NOT NULL DEFAULT ''",
+        }
+        existing_job_columns = {item["name"] for item in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        for name, definition in job_columns.items():
+            if name not in existing_job_columns:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_source_key "
+            "ON jobs(source_key) WHERE source_key <> ''"
+        )
         application_columns = {
             "resume_compile_status": "TEXT NOT NULL DEFAULT 'pending'",
             "resume_compile_engine": "TEXT NOT NULL DEFAULT ''",
@@ -167,6 +195,7 @@ def init_db() -> None:
             "daily_application_limit": "10",
             "daily_email_limit": "15",
             "scan_interval_minutes": "0",
+            "max_jobs_per_source": "80",
             "target_companies": "",
             "career_urls": "",
             "email_mode": "approval",

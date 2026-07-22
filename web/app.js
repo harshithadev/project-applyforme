@@ -51,6 +51,12 @@ function compileStatusClass(status) {
     : "pending";
 }
 
+function formatJobDate(value) {
+  if (!value) return "Date not listed";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "Date not listed" : `Posted/updated ${parsed.toLocaleDateString()}`;
+}
+
 async function loadState() {
   state.data = await api("/api/state");
   render();
@@ -158,11 +164,15 @@ function renderJobs(jobs) {
         </div>
         <span class="status">${escapeHtml(job.status)}</span>
       </div>
-      <p>${escapeHtml((job.description || "").slice(0, 260))}</p>
-      <p class="meta">Score <span class="score">${Number(job.score || 0)}</span> · ${escapeHtml(job.source)}</p>
+      <p class="job-facts">${escapeHtml(job.location || "Location not listed")} · ${escapeHtml(formatJobDate(job.posted_at))}</p>
+      <p>${escapeHtml((job.description || "").slice(0, 420))}</p>
+      <div class="match-reasons">
+        ${(job.match_reasons || []).map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}
+      </div>
+      <p class="meta">Match <span class="score">${Number(job.score || 0)}</span> · ${escapeHtml(job.source)}</p>
       <div class="card-actions">
         <button data-action="draft" data-job="${job.id}">Draft package</button>
-        <a href="${escapeHtml(job.url)}" target="_blank" rel="noreferrer"><button class="secondary">Open</button></a>
+        <a class="button-link secondary" href="${escapeHtml(job.url)}" target="_blank" rel="noreferrer">Open posting</a>
       </div>
     </article>
   `).join("");
@@ -311,7 +321,7 @@ function bindEvents() {
 
   $("#scanBtn").addEventListener("click", async () => {
     const result = await api("/api/jobs/scan", { method: "POST", body: "{}" });
-    toast(`Scan complete: ${result.inserted} new, ${result.seen} seen.`);
+    toast(`Scan complete: ${result.inserted} new, ${result.seen} refreshed, ${result.filtered} filtered, ${result.errors} errors.`);
     await loadState();
   });
 

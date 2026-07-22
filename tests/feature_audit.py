@@ -7,6 +7,7 @@ import tempfile
 import threading
 import urllib.request
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterator
@@ -17,10 +18,26 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class CareerFixture(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        body = b"""<!doctype html><html><body>
-        <a href="/jobs/platform-engineer">Platform Engineer - Python and TypeScript</a>
-        <a href="/about">About ExampleCo</a>
-        </body></html>"""
+        if self.path.startswith("/jobs/platform-engineer"):
+            structured = {
+                "@context": "https://schema.org",
+                "@type": "JobPosting",
+                "title": "Platform Engineer",
+                "description": "<p>Build production Python and TypeScript services, reliable APIs, and cloud automation.</p>",
+                "datePosted": datetime.now(timezone.utc).isoformat(),
+                "jobLocationType": "TELECOMMUTE",
+                "hiringOrganization": {"@type": "Organization", "name": "ExampleCo"},
+                "url": f"http://{self.headers['Host']}/jobs/platform-engineer",
+            }
+            body = (
+                "<!doctype html><html><head><script type=\"application/ld+json\">"
+                f"{json.dumps(structured)}</script></head><body><h1>Platform Engineer</h1></body></html>"
+            ).encode("utf-8")
+        else:
+            body = b"""<!doctype html><html><body>
+            <a href="/jobs/platform-engineer?utm_source=audit">Platform Engineer - Python and TypeScript</a>
+            <a href="/about">About ExampleCo</a>
+            </body></html>"""
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -138,17 +155,28 @@ def main() -> None:
             set_setting("career_urls", careers_url)
             set_setting("target_companies", "ExampleCo")
             set_setting("role_keywords", "platform engineer, Python, TypeScript")
+            set_setting("locations", "remote")
+            set_setting("posted_within_days", "14")
             first_scan = jobs.discover_jobs()
             second_scan = jobs.discover_jobs()
         if first_scan["inserted"] == 1 and second_scan["seen"] == 1:
             record("PASS", "Career-page scanning", "Configured pages are scanned and duplicate job URLs are ignored.")
         else:
             record("FAIL", "Career-page scanning", f"First={first_scan}, second={second_scan}")
-        record(
-            "PARTIAL",
-            "Job discovery quality",
-            "The scanner reads static links only; location/date filters and JavaScript ATS pages are not handled.",
-        )
+        discovered_job = row("SELECT * FROM jobs WHERE source = 'career-detail' LIMIT 1")
+        if (
+            discovered_job
+            and "production Python" in discovered_job["description"]
+            and discovered_job["location"] == "Remote"
+            and discovered_job["posted_at"]
+        ):
+            record(
+                "PASS",
+                "Job discovery quality",
+                "Detail pages are enriched and role, company, location, and posting-age filters are applied.",
+            )
+        else:
+            record("FAIL", "Job discovery quality", f"Enriched job was incomplete: {discovered_job}")
 
         tailored_job_id = jobs.add_manual_job(
             {

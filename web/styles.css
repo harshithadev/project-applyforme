@@ -428,6 +428,32 @@ main {
   font-weight: 700;
 }
 
+.job-facts {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.match-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.match-reasons:empty {
+  display: none;
+}
+
+.match-reasons span {
+  padding: 3px 7px;
+  border: 1px solid #cfded8;
+  border-radius: 5px;
+  background: #f2f7f5;
+  color: #315c51;
+  font-size: 11px;
+}
+
 .card-actions {
   display: flex;
   gap: 8px;
