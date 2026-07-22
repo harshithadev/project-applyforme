@@ -12,6 +12,8 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Role, company, location, and posting-age filters with canonical URL and ATS-ID deduplication.
 - Tailored LaTeX resume generation with validated PDF output for each job.
 - Dashboard PDF preview, LaTeX download, recompile controls, and compiler diagnostics.
+- Evidence-grounded writing versions for resume content, cover letters, statements, and outreach.
+- A local Codex writing queue that uses saved ChatGPT authentication instead of an OpenAI API key.
 - Application package tracking with review, approval, and submitted states.
 - Saved answer rules for repeated application-form questions.
 - Email sending limits and SMTP-backed sending endpoint.
@@ -21,7 +23,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 
 - Browser submission is queued until Playwright and site-specific adapters are installed.
 - PDF compilation reports a clear blocked state when no supported local TeX engine is available.
-- AI writing is designed for active Codex/ChatGPT operation in v1, so the local backend does not require OpenAI API billing.
+- Codex writing requires an explicit local queue action and a ChatGPT-authenticated Codex CLI session.
 
 ## Run
 
@@ -65,6 +67,19 @@ Add company career pages, Greenhouse boards, or Lever sites under **Settings > C
 
 The posting-age filter is applied when a source supplies a date. Jobs without a source date remain visible and are marked accordingly rather than being silently discarded.
 
+## Codex writer
+
+Sign the local Codex CLI in with ChatGPT before using **Generate with Codex**:
+
+```bash
+codex login
+codex login status
+```
+
+The worker reuses that saved ChatGPT login. It refuses other authentication modes, removes API keys and application secrets from the subprocess environment, and runs each request in an isolated nested Git repository with a read-only sandbox. Each response must satisfy a JSON schema and pass local evidence validation before it can replace the active draft.
+
+Codex-generated drafts use your ChatGPT/Codex plan allowance and remain subject to its limits. The dashboard does not convert a ChatGPT subscription into general OpenAI API access.
+
 Run the core ingestion and application lifecycle tests with:
 
 ```bash
@@ -75,6 +90,18 @@ Run the discovery adapter and filter tests independently with:
 
 ```bash
 npm run test:jobs
+```
+
+Run the writing version, validation, rollback, and isolated queue tests with:
+
+```bash
+npm run test:writing
+```
+
+Run an optional live Codex generation smoke test, which uses ChatGPT/Codex plan allowance:
+
+```bash
+npm run test:codex-live
 ```
 
 Run the compiler success and failure-path test independently with:
@@ -103,4 +130,6 @@ npm run init
 npm run ingest-docs
 npm run scan-jobs
 python3 -m job_agent.cli draft <job_id>
+python3 -m job_agent.cli write <application_id>
+python3 -m job_agent.cli process-writing
 ```

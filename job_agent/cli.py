@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from . import applications, jobs, profile
+from . import applications, jobs, profile, writing
 from .db import init_db, rows
 
 
@@ -14,6 +14,9 @@ def main() -> None:
     sub.add_parser("scan-jobs")
     draft = sub.add_parser("draft")
     draft.add_argument("job_id", type=int)
+    write = sub.add_parser("write")
+    write.add_argument("application_id", type=int)
+    sub.add_parser("process-writing")
     sub.add_parser("state")
     args = parser.parse_args()
     init_db()
@@ -26,6 +29,10 @@ def main() -> None:
     elif args.command == "draft":
         app = applications.draft_application(args.job_id)
         print(f"Drafted application {app.get('id')}: {app.get('resume_tex_path')}")
+    elif args.command == "write":
+        print(writing.queue_codex_draft(args.application_id))
+    elif args.command == "process-writing":
+        print(writing.process_next_task() or {"status": "idle"})
     elif args.command == "state":
         print(
             {

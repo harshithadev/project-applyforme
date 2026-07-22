@@ -8,7 +8,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import applications, automation, emailer, jobs, profile
+from . import applications, automation, emailer, jobs, profile, writing
 from .config import GENERATED_DIR, WEB_DIR
 from .db import all_settings, db_info, init_db, log, rows, set_setting
 from .latex import available_latex_engine
@@ -38,6 +38,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "paths": db_info(),
                     "latex_engine": available_latex_engine(),
                     "automation": automation.automation_status(),
+                    "codex": writing.codex_status(),
                 }
             )
             return
@@ -73,6 +74,22 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json(automation.apply_application(int(payload["application_id"])))
             elif path == "/api/applications/compile":
                 self.json(applications.recompile_application(int(payload["application_id"])))
+            elif path == "/api/applications/writing/queue":
+                self.json(writing.queue_codex_draft(int(payload["application_id"])))
+            elif path == "/api/applications/writing/save":
+                self.json(
+                    writing.save_manual_draft(
+                        int(payload["application_id"]),
+                        payload.get("content", {}),
+                    )
+                )
+            elif path == "/api/applications/writing/activate":
+                self.json(
+                    writing.activate_existing_version(
+                        int(payload["application_id"]),
+                        int(payload["version_id"]),
+                    )
+                )
             elif path == "/api/rules":
                 self.json({"id": applications.save_answer_rule(str(payload["question"]), str(payload["answer"]))})
             elif path == "/api/email/send":
@@ -136,6 +153,7 @@ class Handler(SimpleHTTPRequestHandler):
 def main() -> None:
     init_db()
     start_background_scanner()
+    writing.start_writing_worker()
     WEB_DIR.mkdir(parents=True, exist_ok=True)
     host = "127.0.0.1"
     port = 8787

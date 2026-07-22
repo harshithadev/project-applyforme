@@ -423,6 +423,107 @@ main {
   white-space: pre-wrap;
 }
 
+.writing-workspace {
+  margin-top: 12px;
+  border-block: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.writing-workspace > summary,
+.writing-status-line,
+.version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.writing-workspace > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.writing-status-line {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.validation-status.passed {
+  background: #e5f4ed;
+  color: #176344;
+}
+
+.validation-status.warning {
+  background: #fff3d6;
+  color: var(--warning);
+}
+
+.validation-status.failed {
+  background: #fbeaea;
+  color: var(--danger);
+}
+
+.validation-messages {
+  margin: 10px 0;
+  padding-left: 20px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.writing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.writing-field,
+.full-width {
+  grid-column: 1 / -1;
+}
+
+.writing-bullets {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.tall-text {
+  min-height: 180px;
+}
+
+.evidence-details,
+.version-history {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.evidence-details > summary,
+.version-history > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.evidence-list p {
+  margin: 8px 0;
+  color: var(--ink);
+}
+
+.evidence-list span {
+  color: var(--muted);
+}
+
+.version-row {
+  min-height: 38px;
+  border-bottom: 1px solid var(--line);
+}
+
+.compact-btn {
+  min-height: 30px;
+  padding: 4px 9px;
+}
+
 .score {
   color: var(--accent-2);
   font-weight: 700;
@@ -564,6 +665,7 @@ textarea {
   .panel-grid,
   .profile-grid,
   .form-grid,
+  .writing-grid,
   .settings-grid {
     grid-template-columns: 1fr;
   }

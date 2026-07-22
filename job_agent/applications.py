@@ -4,8 +4,9 @@ import json
 import re
 from pathlib import Path
 
+from . import writing
 from .db import connect, log, now_iso, row, rows, setting
-from .latex import CompilationResult, application_dir, compile_pdf, extract_keywords, generate_resume_tex
+from .latex import CompilationResult, application_dir, compile_pdf, generate_resume_tex
 from .profile import profile_text
 
 
@@ -15,57 +16,13 @@ RISKY_PATTERNS = re.compile(
 )
 
 
-def generate_cover_letter(job: dict[str, object], profile: str) -> str:
-    title = job["title"]
-    company = job["company"]
-    keywords = ", ".join(extract_keywords(str(job.get("description", "")))[:8])
-    evidence = " ".join(profile.split())[:900]
-    return (
-        f"Dear {company} Hiring Team,\n\n"
-        f"I am interested in the {title} role because it aligns with my background and the needs described in the posting"
-        f"{f' around {keywords}' if keywords else ''}. Based on my uploaded resume, transcript, and notes, the strongest evidence to highlight is: {evidence}\n\n"
-        "I would welcome the opportunity to discuss how my experience can contribute to the team.\n\n"
-        "Best,\n"
-        "[Your Name]"
-    )
-
-
-def generate_statements(job: dict[str, object]) -> list[dict[str, str]]:
-    company = str(job["company"])
-    title = str(job["title"])
-    return [
-        {
-            "question": "Why are you interested in this role?",
-            "answer": f"I am interested in the {title} role at {company} because it matches the responsibilities and skills emphasized in the job description, and it gives me a clear opportunity to apply my documented experience to meaningful work.",
-        },
-        {
-            "question": "Anything else you would like us to know?",
-            "answer": "I generated this draft from my uploaded source documents and will review it for accuracy before submission.",
-        },
-    ]
-
-
-def generate_email(job: dict[str, object]) -> tuple[str, str]:
-    title = str(job["title"])
-    company = str(job["company"])
-    subject = f"Interest in {title}"
-    body = (
-        f"Hi,\n\n"
-        f"I recently found the {title} opening at {company} and wanted to briefly introduce myself. "
-        "I am preparing a tailored application and would appreciate being considered for the role. "
-        "If you are the right person to contact, I would be glad to share a concise resume or any additional details.\n\n"
-        "Best,\n"
-        "[Your Name]"
-    )
-    return subject, body
-
-
 def draft_application(job_id: int, mode: str | None = None) -> dict[str, object]:
     job = row("SELECT * FROM jobs WHERE id = ?", (job_id,))
     if not job:
         raise ValueError(f"Job {job_id} does not exist")
+    if not writing.evidence_catalog(limit=1):
+        raise ValueError("Ingest at least one source document before drafting an application")
     active_mode = mode or setting("mode", "review")
-    profile = profile_text()
     now = now_iso()
     with connect() as conn:
         cur = conn.execute(
@@ -76,24 +33,55 @@ def draft_application(job_id: int, mode: str | None = None) -> dict[str, object]
             (job_id, active_mode, "drafted", now, now),
         )
         application_id = int(cur.lastrowid)
+    version = writing.create_initial_version(application_id, job)
+    activate_writing_version(application_id, int(version["id"]))
+    with connect() as conn:
+        conn.execute("UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?", ("drafted", now_iso(), job_id))
+    log(f"Drafted application package for {job['title']} at {job['company']}.", meta={"application_id": application_id})
+    return get_application(application_id) or {}
+
+
+def activate_writing_version(application_id: int, version_id: int) -> dict[str, object]:
+    version = writing.get_version(version_id)
+    if not version or int(version["application_id"]) != application_id:
+        raise ValueError("Writing version does not belong to this application")
+    validation = version.get("validation", {})
+    if validation.get("status") == "failed":
+        raise ValueError("Writing version failed evidence validation")
+    job = row(
+        """
+        SELECT jobs.*, applications.status AS application_status FROM applications
+        JOIN jobs ON jobs.id = applications.job_id
+        WHERE applications.id = ?
+        """,
+        (application_id,),
+    )
+    if not job:
+        raise ValueError(f"Application {application_id} does not exist")
+    if job["application_status"] == "submitted":
+        raise ValueError("Submitted application documents cannot be replaced")
+    content = version["content"]
     app_dir = application_dir(application_id)
     tex_path = app_dir / "resume.tex"
-    resume_tex = generate_resume_tex(profile, job, tex_path)
+    resume_tex = generate_resume_tex(profile_text(), job, tex_path, content.get("resume"))
     compilation = compile_pdf(tex_path)
-    cover = generate_cover_letter(job, profile)
-    statements = generate_statements(job)
-    email_subject, email_body = generate_email(job)
+    email = content.get("email", {})
     with connect() as conn:
         conn.execute(
             """
             UPDATE applications
-            SET resume_tex_path = ?, resume_pdf_path = ?, resume_compile_status = ?,
+            SET current_writing_version_id = ?, writing_status = 'draft', writing_message = ?,
+                resume_tex_path = ?, resume_pdf_path = ?, resume_compile_status = ?,
                 resume_compile_engine = ?, resume_compile_message = ?, resume_compile_log = ?,
                 resume_pdf_pages = ?, resume_pdf_bytes = ?, resume_compiled_at = ?,
-                cover_letter = ?, statements = ?, email_subject = ?, email_body = ?, updated_at = ?
+                cover_letter = ?, statements = ?, email_subject = ?, email_body = ?,
+                status = CASE WHEN status = 'submitted' THEN status ELSE 'drafted' END,
+                updated_at = ?
             WHERE id = ?
             """,
             (
+                version_id,
+                f"Writing version {version['version']} is ready for review.",
                 resume_tex,
                 compilation.pdf_path,
                 compilation.status,
@@ -103,16 +91,18 @@ def draft_application(job_id: int, mode: str | None = None) -> dict[str, object]
                 compilation.page_count,
                 compilation.size_bytes,
                 now_iso(),
-                cover,
-                json.dumps(statements),
-                email_subject,
-                email_body,
+                content.get("cover_letter", ""),
+                json.dumps(content.get("statements", [])),
+                email.get("subject", ""),
+                email.get("body", ""),
                 now_iso(),
                 application_id,
             ),
         )
-        conn.execute("UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?", ("drafted", now_iso(), job_id))
-    log(f"Drafted application package for {job['title']} at {job['company']}.", meta={"application_id": application_id})
+    log(
+        f"Activated writing version {version['version']} for application {application_id}.",
+        meta={"version_id": version_id, "validation": validation.get("status")},
+    )
     return get_application(application_id) or {}
 
 
@@ -166,6 +156,7 @@ def get_application(application_id: int) -> dict[str, object] | None:
     )
     if app:
         app["statements"] = json.loads(str(app.get("statements") or "[]"))
+        app["writing"] = writing.application_overview(application_id)
     return app
 
 
@@ -181,10 +172,12 @@ def list_applications() -> list[dict[str, object]]:
     )
     for app in apps:
         app["statements"] = json.loads(str(app.get("statements") or "[]"))
+        app["writing"] = writing.application_overview(int(app["id"]))
     return apps
 
 
 def approve_application(application_id: int) -> None:
+    writing.approve_current_version(application_id)
     with connect() as conn:
         conn.execute("UPDATE applications SET status = ?, updated_at = ? WHERE id = ?", ("approved", now_iso(), application_id))
     log(f"Approved application {application_id}.")

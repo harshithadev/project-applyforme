@@ -1,6 +1,7 @@
 const state = {
   data: null,
-  activeView: "overview"
+  activeView: "overview",
+  writingPoll: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -68,6 +69,7 @@ function render() {
 
   $("#modeBadge").textContent = formatMode(data.settings.mode);
   $("#latexBadge").textContent = data.latex_engine || "missing";
+  $("#codexBadge").textContent = data.codex?.ready ? "ChatGPT ready" : "Unavailable";
   $("#docCount").textContent = data.profile.documents.length;
   $("#jobCount").textContent = data.jobs.length;
   $("#appCount").textContent = data.applications.length;
@@ -84,6 +86,13 @@ function render() {
   renderApplications(data.applications);
   renderRules(data.answer_rules || []);
   populateSettings(data.settings);
+  scheduleWritingRefresh(data.applications);
+}
+
+function scheduleWritingRefresh(applications) {
+  clearTimeout(state.writingPoll);
+  const active = applications.some((app) => ["queued", "running"].includes(app.writing?.task?.status));
+  state.writingPoll = active ? setTimeout(() => loadState().catch((error) => toast(error.message)), 3000) : null;
 }
 
 function renderDocs(docs) {
@@ -193,6 +202,82 @@ function renderApplications(apps) {
     const compilerDetails = compileStatus !== "compiled" && app.resume_compile_log
       ? `<details class="compile-log"><summary>Compiler details</summary><pre>${escapeHtml(app.resume_compile_log)}</pre></details>`
       : "";
+    const writing = app.writing || {};
+    const current = writing.current || {};
+    const content = current.content || {};
+    const resume = content.resume || {};
+    const email = content.email || {};
+    const validation = current.validation || {};
+    const evidence = new Map((current.evidence || []).map((item) => [String(item.id), item]));
+    const referencedEvidence = [...new Set((content.claims || []).flatMap((claim) => claim.evidence_ids || []))]
+      .map((id) => evidence.get(String(id)))
+      .filter(Boolean);
+    const taskActive = ["queued", "running"].includes(writing.task?.status);
+    const versionRows = (writing.versions || []).map((version) => `
+      <div class="version-row">
+        <span>v${version.version} · ${escapeHtml(version.origin)} · ${escapeHtml(version.validation?.status || version.status)}</span>
+        ${Number(version.id) === Number(current.id)
+          ? `<strong>Current</strong>`
+          : `<button class="secondary compact-btn" data-action="writing-activate" data-app="${app.id}" data-version="${version.id}" ${app.status === "submitted" ? "disabled" : ""}>Use</button>`}
+      </div>
+    `).join("");
+    const validationMessages = [...(validation.errors || []), ...(validation.warnings || [])];
+    const writingWorkspace = current.id ? `
+      <details class="writing-workspace">
+        <summary>
+          <span>Writing workspace · v${current.version}</span>
+          <span class="status validation-status ${escapeHtml(validation.status || "pending")}">${escapeHtml(validation.status || "pending")}</span>
+        </summary>
+        <div class="writing-status-line">
+          <span>${escapeHtml(writing.message || "Draft ready for review.")}</span>
+          <span>Evidence ${Number(validation.evidence_references || 0)} · Keywords ${Number(validation.keyword_coverage || 0)}%</span>
+        </div>
+        ${validationMessages.length ? `<ul class="validation-messages">${validationMessages.map((message) => `<li>${escapeHtml(message)}</li>`).join("")}</ul>` : ""}
+        <div class="writing-grid">
+          <label>Resume summary
+            <textarea data-writing-field="summary">${escapeHtml(resume.summary || "")}</textarea>
+          </label>
+          <div class="writing-field full-width">
+            <span class="label">Resume bullets</span>
+            <div class="writing-bullets">
+              ${(resume.bullets || []).map((bullet, index) => `
+                <label>Bullet ${index + 1} · ${escapeHtml((bullet.evidence_ids || []).join(", "))}
+                  <textarea data-writing-bullet="${index}">${escapeHtml(bullet.text || "")}</textarea>
+                </label>
+              `).join("")}
+            </div>
+          </div>
+          <label class="full-width">Cover letter
+            <textarea data-writing-field="cover_letter" class="tall-text">${escapeHtml(content.cover_letter || "")}</textarea>
+          </label>
+          ${(content.statements || []).map((statement, index) => `
+            <label class="full-width">${escapeHtml(statement.question || `Statement ${index + 1}`)}
+              <textarea data-writing-statement="${index}">${escapeHtml(statement.answer || "")}</textarea>
+            </label>
+          `).join("")}
+          <label>Email subject
+            <input data-writing-field="email_subject" value="${escapeHtml(email.subject || "")}" />
+          </label>
+          <label class="full-width">Outreach email
+            <textarea data-writing-field="email_body">${escapeHtml(email.body || "")}</textarea>
+          </label>
+        </div>
+        <div class="card-actions">
+          <button data-action="writing-save" data-app="${app.id}" ${app.status === "submitted" ? "disabled" : ""}>Save new version</button>
+          <button data-action="writing-queue" data-app="${app.id}" class="secondary" ${taskActive || !state.data.codex?.ready || app.status === "submitted" ? "disabled" : ""}>Generate with Codex</button>
+        </div>
+        <details class="evidence-details">
+          <summary>Evidence references (${referencedEvidence.length})</summary>
+          <div class="evidence-list">
+            ${referencedEvidence.map((item) => `<p><strong>${escapeHtml(item.id)}</strong> ${escapeHtml(item.text)} <span>${escapeHtml(item.source)}</span></p>`).join("") || `<p>No evidence references.</p>`}
+          </div>
+        </details>
+        <details class="version-history">
+          <summary>Version history (${(writing.versions || []).length})</summary>
+          ${versionRows}
+        </details>
+      </details>
+    ` : "";
     return `
     <article class="app-card">
       <div class="card-head">
@@ -210,7 +295,7 @@ function renderApplications(apps) {
         <span class="status compile-status ${compileStatusClass(compileStatus)}">${escapeHtml(compileStatus)}</span>
       </div>
       ${compilerDetails}
-      <p>${escapeHtml((app.cover_letter || "").slice(0, 320))}</p>
+      ${writingWorkspace}
       <div class="card-actions">
         ${app.resume_pdf_path ? `<a class="button-link" href="${artifactBase}&kind=pdf" target="_blank" rel="noreferrer">Open PDF</a>` : ""}
         ${app.resume_tex_path ? `<a class="button-link secondary" href="${artifactBase}&kind=tex">Download LaTeX</a>` : ""}
@@ -222,6 +307,34 @@ function renderApplications(apps) {
     </article>
   `;
   }).join("");
+}
+
+function collectWritingContent(button) {
+  const applicationId = Number(button.dataset.app);
+  const app = state.data.applications.find((item) => Number(item.id) === applicationId);
+  const article = button.closest(".app-card");
+  const original = app.writing.current.content;
+  const content = JSON.parse(JSON.stringify(original));
+  const oldSummary = content.resume.summary;
+  content.resume.summary = article.querySelector('[data-writing-field="summary"]').value;
+  article.querySelectorAll("[data-writing-bullet]").forEach((field) => {
+    const index = Number(field.dataset.writingBullet);
+    const oldText = content.resume.bullets[index].text;
+    content.resume.bullets[index].text = field.value;
+    content.claims.forEach((claim) => {
+      if (claim.text === oldText) claim.text = field.value;
+    });
+  });
+  content.claims.forEach((claim) => {
+    if (claim.text === oldSummary) claim.text = content.resume.summary;
+  });
+  content.cover_letter = article.querySelector('[data-writing-field="cover_letter"]').value;
+  article.querySelectorAll("[data-writing-statement]").forEach((field) => {
+    content.statements[Number(field.dataset.writingStatement)].answer = field.value;
+  });
+  content.email.subject = article.querySelector('[data-writing-field="email_subject"]').value;
+  content.email.body = article.querySelector('[data-writing-field="email_body"]').value;
+  return content;
 }
 
 function renderRules(rules) {
@@ -297,6 +410,30 @@ async function handleAction(action, button) {
         body: JSON.stringify({ application_id: Number(button.dataset.app) })
       });
       toast(result.resume_compile_message || "Resume compilation finished.");
+    } else if (action === "writing-queue") {
+      const result = await api("/api/applications/writing/queue", {
+        method: "POST",
+        body: JSON.stringify({ application_id: Number(button.dataset.app) })
+      });
+      toast(result.message || "Codex writing task queued.");
+    } else if (action === "writing-save") {
+      const result = await api("/api/applications/writing/save", {
+        method: "POST",
+        body: JSON.stringify({
+          application_id: Number(button.dataset.app),
+          content: collectWritingContent(button)
+        })
+      });
+      toast(result.validation?.status === "failed" ? "Draft saved but blocked by evidence validation." : `Writing version ${result.version} saved.`);
+    } else if (action === "writing-activate") {
+      await api("/api/applications/writing/activate", {
+        method: "POST",
+        body: JSON.stringify({
+          application_id: Number(button.dataset.app),
+          version_id: Number(button.dataset.version)
+        })
+      });
+      toast("Writing version restored. Review and approve it before applying.");
     }
     await loadState();
   } catch (error) {

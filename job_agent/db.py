@@ -101,6 +101,10 @@ def init_db() -> None:
               resume_pdf_pages INTEGER NOT NULL DEFAULT 0,
               resume_pdf_bytes INTEGER NOT NULL DEFAULT 0,
               resume_compiled_at TEXT NOT NULL DEFAULT '',
+              current_writing_version_id INTEGER,
+              approved_writing_version_id INTEGER,
+              writing_status TEXT NOT NULL DEFAULT 'draft',
+              writing_message TEXT NOT NULL DEFAULT '',
               cover_letter TEXT NOT NULL DEFAULT '',
               statements TEXT NOT NULL DEFAULT '[]',
               email_subject TEXT NOT NULL DEFAULT '',
@@ -109,6 +113,37 @@ def init_db() -> None:
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
               FOREIGN KEY(job_id) REFERENCES jobs(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS writing_versions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              application_id INTEGER NOT NULL,
+              version INTEGER NOT NULL,
+              origin TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'draft',
+              content_json TEXT NOT NULL,
+              evidence_json TEXT NOT NULL DEFAULT '[]',
+              validation_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              approved_at TEXT NOT NULL DEFAULT '',
+              UNIQUE(application_id, version),
+              FOREIGN KEY(application_id) REFERENCES applications(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS writing_tasks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              application_id INTEGER NOT NULL,
+              status TEXT NOT NULL DEFAULT 'queued',
+              request_json TEXT NOT NULL DEFAULT '{}',
+              result_json TEXT NOT NULL DEFAULT '{}',
+              task_dir TEXT NOT NULL DEFAULT '',
+              output_path TEXT NOT NULL DEFAULT '',
+              message TEXT NOT NULL DEFAULT '',
+              log TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              started_at TEXT NOT NULL DEFAULT '',
+              completed_at TEXT NOT NULL DEFAULT '',
+              FOREIGN KEY(application_id) REFERENCES applications(id)
             );
 
             CREATE TABLE IF NOT EXISTS answer_rules (
@@ -180,6 +215,10 @@ def init_db() -> None:
             "resume_pdf_pages": "INTEGER NOT NULL DEFAULT 0",
             "resume_pdf_bytes": "INTEGER NOT NULL DEFAULT 0",
             "resume_compiled_at": "TEXT NOT NULL DEFAULT ''",
+            "current_writing_version_id": "INTEGER",
+            "approved_writing_version_id": "INTEGER",
+            "writing_status": "TEXT NOT NULL DEFAULT 'draft'",
+            "writing_message": "TEXT NOT NULL DEFAULT ''",
         }
         existing_application_columns = {
             item["name"] for item in conn.execute("PRAGMA table_info(applications)").fetchall()
@@ -187,6 +226,10 @@ def init_db() -> None:
         for name, definition in application_columns.items():
             if name not in existing_application_columns:
                 conn.execute(f"ALTER TABLE applications ADD COLUMN {name} {definition}")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_writing_tasks_status "
+            "ON writing_tasks(status, created_at)"
+        )
         defaults = {
             "mode": "review",
             "role_keywords": "software engineer, developer, full stack",

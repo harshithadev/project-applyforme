@@ -83,7 +83,12 @@ def extract_keywords(description: str) -> list[str]:
     return [word for word, _ in sorted(freq.items(), key=lambda item: (-item[1], item[0]))[:16]]
 
 
-def generate_resume_tex(profile: str, job: dict[str, object], destination: Path) -> str:
+def generate_resume_tex(
+    profile: str,
+    job: dict[str, object],
+    destination: Path,
+    resume_content: object | None = None,
+) -> str:
     title = str(job.get("title", "Target Role"))
     company = str(job.get("company", "Target Company"))
     description = str(job.get("description", ""))
@@ -95,7 +100,23 @@ def generate_resume_tex(profile: str, job: dict[str, object], destination: Path)
     ]
     evidence = profile_lines[:12] or ["Add resume, transcripts, and notes to docs/."]
     candidate_name = evidence[0]
-    bullets = evidence[1:7] or evidence[:6]
+    structured = resume_content if isinstance(resume_content, dict) else {}
+    structured_bullets = structured.get("bullets") if isinstance(structured.get("bullets"), list) else []
+    bullets = []
+    for item in structured_bullets:
+        if isinstance(item, dict) and str(item.get("text") or "").strip():
+            bullets.append(
+                {
+                    "text": str(item["text"]).strip(),
+                    "evidence_ids": [str(value) for value in item.get("evidence_ids", [])],
+                }
+            )
+    if not bullets:
+        bullets = [{"text": item, "evidence_ids": []} for item in (evidence[1:7] or evidence[:6])]
+    summary = str(structured.get("summary") or "").strip() or (
+        f"Candidate profile tailored for {title} using uploaded source documents. This draft emphasizes "
+        f"evidence that appears relevant to {company} and should be reviewed before submission."
+    )
     keyword_line = ", ".join(keywords[:10]) or "role-aligned experience"
     tex = rf"""
 \documentclass[10pt,letterpaper]{{article}}
@@ -114,12 +135,12 @@ def generate_resume_tex(profile: str, job: dict[str, object], destination: Path)
 
 \vspace{{8pt}}
 \textbf{{Professional Summary}}\\
-Candidate profile tailored for {latex_escape(title)} using uploaded source documents. This draft emphasizes evidence that appears relevant to {latex_escape(company)} and should be reviewed before submission.
+{latex_escape(summary)}
 
 \vspace{{8pt}}
 \textbf{{Relevant Experience and Evidence}}
 \begin{{itemize}}
-{chr(10).join(f"  \\item {latex_escape(item[:220])}" for item in bullets)}
+{chr(10).join(f"  % Evidence: {', '.join(item['evidence_ids']) or 'unmapped'}{chr(10)}  \\item {latex_escape(item['text'][:300])}" for item in bullets)}
 \end{{itemize}}
 
 \vspace{{8pt}}

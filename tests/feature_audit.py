@@ -125,7 +125,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["APPLYFORME_ROOT"] = tmp
 
-        from job_agent import app, applications, automation, emailer, jobs, profile
+        from job_agent import app, applications, automation, emailer, jobs, profile, writing
         from job_agent.config import DOCS_DIR
         from job_agent.db import init_db, log, row, rows, set_setting
         from job_agent.latex import available_latex_engine
@@ -198,10 +198,37 @@ def main() -> None:
         else:
             record("FAIL", "Tailored LaTeX source", "Expected company, role, keyword, or profile evidence is absent.")
 
-        if app_record["cover_letter"] and app_record["statements"] and app_record["email_body"]:
-            record("PARTIAL", "Automatic written materials", "Cover letter, statements, and outreach are generated, but only from fixed templates.")
+        writing_overview = app_record.get("writing", {})
+        current_writing = writing_overview.get("current") or {}
+        if (
+            app_record["cover_letter"]
+            and app_record["statements"]
+            and app_record["email_body"]
+            and current_writing.get("evidence")
+            and current_writing.get("validation", {}).get("status") in {"passed", "warning"}
+        ):
+            record(
+                "PASS",
+                "Automatic written materials",
+                "Resume content, cover letter, statements, and outreach are generated with evidence mappings.",
+            )
         else:
             record("FAIL", "Automatic written materials", "One or more application drafts were empty.")
+        invalid_content = json.loads(json.dumps(current_writing.get("content", {})))
+        invalid_content["resume"]["bullets"][0]["text"] = "Increased throughput by 99%."
+        invalid_content["claims"][0] = {
+            "text": "Increased throughput by 99%.",
+            "evidence_ids": invalid_content["resume"]["bullets"][0]["evidence_ids"],
+        }
+        invalid_version = writing.save_manual_draft(int(app_record["id"]), invalid_content)
+        if invalid_version.get("validation", {}).get("status") == "failed":
+            record(
+                "PASS",
+                "Unsupported-claim detection",
+                "Unverified quantitative claims are rejected without replacing the active draft.",
+            )
+        else:
+            record("FAIL", "Unsupported-claim detection", f"Unexpected validation: {invalid_version}")
 
         engine = available_latex_engine()
         pdf_path = str(app_record["resume_pdf_path"] or "")
@@ -385,7 +412,15 @@ def main() -> None:
         record("FAIL", "Background application worker", "There is no worker that consumes approved applications and submits them.")
         record("FAIL", "Hiring-manager discovery", "A contacts table exists, but no contact-finding or verification workflow exists.")
         record("FAIL", "Hiring-manager outreach workflow", "There is no contact-to-draft-to-approval UI workflow.")
-        record("FAIL", "ChatGPT subscription/Codex bridge", "The local website cannot invoke a ChatGPT subscription or Codex run in the background.")
+        codex = writing.codex_status(force=True)
+        if codex["ready"] and codex["auth"] == "chatgpt":
+            record(
+                "PASS",
+                "ChatGPT subscription/Codex bridge",
+                "The isolated writing queue can use the locally cached ChatGPT-authenticated Codex CLI.",
+            )
+        else:
+            record("BLOCKED", "ChatGPT subscription/Codex bridge", str(codex["message"]))
 
     order = {"PASS": 0, "PARTIAL": 1, "BLOCKED": 2, "FAIL": 3}
     for status, feature, detail in sorted(results, key=lambda item: (order[item[0]], item[1])):
