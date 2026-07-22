@@ -1,0 +1,14 @@
+{
+  "name": "applyforme-local-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first Codex-operated job application agent with LaTeX resume generation.",
+  "scripts": {
+    "dev": "python3 -m job_agent.app",
+    "init": "python3 -m job_agent.cli init",
+    "ingest-docs": "python3 -m job_agent.cli ingest-docs",
+    "scan-jobs": "python3 -m job_agent.cli scan-jobs",
+    "test": "python3 tests/smoke.py",
+    "test:features": "python3 tests/feature_audit.py"
+  }
+}

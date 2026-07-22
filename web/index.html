@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ApplyForMe</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">AF</div>
+          <div>
+            <h1>ApplyForMe</h1>
+            <p>Local job agent</p>
+          </div>
+        </div>
+        <nav>
+          <button class="nav-item active" data-view="overview">Overview</button>
+          <button class="nav-item" data-view="jobs">Jobs</button>
+          <button class="nav-item" data-view="applications">Applications</button>
+          <button class="nav-item" data-view="settings">Settings</button>
+          <button class="nav-item" data-view="logs">Logs</button>
+        </nav>
+        <div class="system-card">
+          <span class="label">Mode</span>
+          <strong id="modeBadge">Review</strong>
+          <span class="label">LaTeX</span>
+          <strong id="latexBadge">Checking</strong>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <h2 id="viewTitle">Overview</h2>
+            <p id="viewSubtitle">Track documents, jobs, applications, and agent actions.</p>
+          </div>
+          <div class="actions">
+            <button id="refreshBtn" class="icon-btn" title="Refresh">↻</button>
+            <button id="ingestBtn">Ingest docs</button>
+            <button id="scanBtn">Scan jobs</button>
+          </div>
+        </header>
+
+        <section id="overview" class="view active">
+          <div class="metric-grid">
+            <div class="metric"><span>Documents</span><strong id="docCount">0</strong></div>
+            <div class="metric"><span>Jobs</span><strong id="jobCount">0</strong></div>
+            <div class="metric"><span>Applications</span><strong id="appCount">0</strong></div>
+            <div class="metric"><span>Events</span><strong id="eventCount">0</strong></div>
+          </div>
+
+          <div class="panel-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Source Documents</h3>
+                <span id="docsPath" class="mono"></span>
+              </div>
+              <div id="docsList" class="list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Recent Activity</h3>
+              </div>
+              <div id="recentEvents" class="timeline"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="jobs" class="view">
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Add Job</h3>
+            </div>
+            <form id="jobForm" class="form-grid">
+              <input name="title" placeholder="Role title" required />
+              <input name="company" placeholder="Company" required />
+              <input name="location" placeholder="Location" />
+              <input name="url" placeholder="Job URL" />
+              <textarea name="description" placeholder="Paste job description"></textarea>
+              <button type="submit">Save job</button>
+            </form>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Job Queue</h3>
+              <span id="jobQueueMeta"></span>
+            </div>
+            <div id="jobsList" class="cards"></div>
+          </section>
+        </section>
+
+        <section id="applications" class="view">
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Applications</h3>
+              <span>Review, approve, submit, or queue browser automation.</span>
+            </div>
+            <div id="applicationsList" class="cards"></div>
+          </section>
+        </section>
+
+        <section id="settings" class="view">
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Automation Settings</h3>
+              <span id="dbPath" class="mono"></span>
+            </div>
+            <form id="settingsForm" class="settings-grid">
+              <label>Mode
+                <select name="mode">
+                  <option value="review">Review</option>
+                  <option value="assisted_autonomous">Assisted autonomous</option>
+                  <option value="rules_autonomous">Rules autonomous</option>
+                </select>
+              </label>
+              <label>Email mode
+                <select name="email_mode">
+                  <option value="approval">Send after approval</option>
+                  <option value="autonomous">Autonomous sending</option>
+                </select>
+              </label>
+              <label>Daily application limit
+                <input name="daily_application_limit" type="number" min="1" max="200" />
+              </label>
+              <label>Daily email limit
+                <input name="daily_email_limit" type="number" min="1" max="200" />
+              </label>
+              <label>Scan interval minutes
+                <input name="scan_interval_minutes" type="number" min="0" max="1440" />
+              </label>
+              <label>Role keywords
+                <textarea name="role_keywords"></textarea>
+              </label>
+              <label>Locations
+                <textarea name="locations"></textarea>
+              </label>
+              <label>Target companies
+                <textarea name="target_companies"></textarea>
+              </label>
+              <label>Career URLs
+                <textarea name="career_urls"></textarea>
+              </label>
+              <button type="submit">Save settings</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Saved Answer Rule</h3>
+            </div>
+            <form id="ruleForm" class="form-grid compact">
+              <input name="question" placeholder="Form question" required />
+              <textarea name="answer" placeholder="Answer to reuse" required></textarea>
+              <button type="submit">Save rule</button>
+            </form>
+            <div id="rulesList" class="list rule-list"></div>
+          </section>
+        </section>
+
+        <section id="logs" class="view">
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Activity Log</h3>
+              <span>Plain-English status from local workers.</span>
+            </div>
+            <div id="logsList" class="timeline"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
