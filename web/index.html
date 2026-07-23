@@ -20,6 +20,7 @@
           <button class="nav-item active" data-view="overview">Overview</button>
           <button class="nav-item" data-view="jobs">Jobs</button>
           <button class="nav-item" data-view="applications">Applications</button>
+          <button class="nav-item" data-view="outreach">Outreach</button>
           <button class="nav-item" data-view="settings">Settings</button>
           <button class="nav-item" data-view="logs">Logs</button>
         </nav>
@@ -30,6 +31,8 @@
           <strong id="latexBadge">Checking</strong>
           <span class="label">Codex writer</span>
           <strong id="codexBadge">Checking</strong>
+          <span class="label">Email delivery</span>
+          <strong id="emailBadge">Checking</strong>
         </div>
       </aside>
 
@@ -51,6 +54,7 @@
             <div class="metric"><span>Documents</span><strong id="docCount">0</strong></div>
             <div class="metric"><span>Jobs</span><strong id="jobCount">0</strong></div>
             <div class="metric"><span>Applications</span><strong id="appCount">0</strong></div>
+            <div class="metric"><span>Outreach</span><strong id="outreachCount">0</strong></div>
             <div class="metric"><span>Events</span><strong id="eventCount">0</strong></div>
           </div>
 
@@ -110,6 +114,59 @@
               <span>Review, approve, submit, or queue browser automation.</span>
             </div>
             <div id="applicationsList" class="cards"></div>
+          </section>
+        </section>
+
+        <section id="outreach" class="view">
+          <div class="panel-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Add Contact</h3>
+                <span id="contactCount">0 contacts</span>
+              </div>
+              <form id="contactForm" class="form-grid">
+                <label>Company
+                  <input name="company" required />
+                </label>
+                <label>Name
+                  <input name="name" />
+                </label>
+                <label>Role
+                  <input name="role" />
+                </label>
+                <label>Email
+                  <input name="email" type="email" required />
+                </label>
+                <label class="full-width">Source URL
+                  <input name="source_url" type="url" />
+                </label>
+                <button type="submit">Add contact</button>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>New Outreach</h3>
+                <span id="emailLimitMeta"></span>
+              </div>
+              <form id="outreachForm" class="form-grid">
+                <label class="full-width">Application
+                  <select name="application_id" id="outreachApplication" required></select>
+                </label>
+                <label class="full-width">Contact
+                  <select name="contact_id" id="outreachContact" required></select>
+                </label>
+                <button type="submit">Create draft</button>
+              </form>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Outreach Queue</h3>
+              <span id="outreachQueueMeta"></span>
+            </div>
+            <div id="outreachList" class="cards"></div>
           </section>
         </section>
 

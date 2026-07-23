@@ -8,7 +8,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import applications, automation, emailer, jobs, profile, writing
+from . import applications, automation, emailer, jobs, outreach, profile, writing
 from .config import GENERATED_DIR, WEB_DIR
 from .db import all_settings, db_info, init_db, log, rows, set_setting
 from .latex import available_latex_engine
@@ -34,11 +34,14 @@ class Handler(SimpleHTTPRequestHandler):
                     "jobs": jobs.list_jobs(),
                     "applications": applications.list_applications(),
                     "answer_rules": rows("SELECT * FROM answer_rules ORDER BY updated_at DESC LIMIT 100"),
+                    "contacts": outreach.list_contacts(),
+                    "outreach": outreach.list_threads(),
                     "events": rows("SELECT * FROM events ORDER BY created_at DESC LIMIT 80"),
                     "paths": db_info(),
                     "latex_engine": available_latex_engine(),
                     "automation": automation.automation_status(),
                     "codex": writing.codex_status(),
+                    "email": outreach.status(),
                 }
             )
             return
@@ -92,6 +95,27 @@ class Handler(SimpleHTTPRequestHandler):
                 )
             elif path == "/api/rules":
                 self.json({"id": applications.save_answer_rule(str(payload["question"]), str(payload["answer"]))})
+            elif path == "/api/contacts":
+                self.json(outreach.create_contact(payload))
+            elif path == "/api/outreach/draft":
+                self.json(
+                    outreach.create_draft(
+                        int(payload["application_id"]),
+                        int(payload["contact_id"]),
+                    )
+                )
+            elif path == "/api/outreach/save":
+                self.json(
+                    outreach.save_draft(
+                        int(payload["thread_id"]),
+                        payload.get("subject", ""),
+                        payload.get("body", ""),
+                    )
+                )
+            elif path == "/api/outreach/approve":
+                self.json(outreach.approve(int(payload["thread_id"])))
+            elif path == "/api/outreach/queue":
+                self.json(outreach.queue(int(payload["thread_id"])))
             elif path == "/api/email/send":
                 self.json(emailer.send_email(str(payload["to"]), str(payload["subject"]), str(payload["body"])))
             else:
@@ -154,6 +178,7 @@ def main() -> None:
     init_db()
     start_background_scanner()
     writing.start_writing_worker()
+    outreach.start_worker()
     WEB_DIR.mkdir(parents=True, exist_ok=True)
     host = "127.0.0.1"
     port = 8787

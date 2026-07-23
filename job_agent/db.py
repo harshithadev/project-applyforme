@@ -164,7 +164,44 @@ def init_db() -> None:
               email TEXT NOT NULL DEFAULT '',
               source_url TEXT NOT NULL DEFAULT '',
               confidence INTEGER NOT NULL DEFAULT 0,
-              created_at TEXT NOT NULL
+              verification_status TEXT NOT NULL DEFAULT 'unverified',
+              notes TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS outreach_threads (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              application_id INTEGER NOT NULL,
+              contact_id INTEGER NOT NULL,
+              writing_version_id INTEGER NOT NULL,
+              active_revision_id INTEGER,
+              approved_revision_id INTEGER,
+              status TEXT NOT NULL DEFAULT 'draft',
+              recipient_email TEXT NOT NULL,
+              idempotency_key TEXT NOT NULL UNIQUE,
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT NOT NULL DEFAULT '',
+              approved_at TEXT NOT NULL DEFAULT '',
+              queued_at TEXT NOT NULL DEFAULT '',
+              sent_at TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE(application_id, contact_id),
+              FOREIGN KEY(application_id) REFERENCES applications(id),
+              FOREIGN KEY(contact_id) REFERENCES contacts(id),
+              FOREIGN KEY(writing_version_id) REFERENCES writing_versions(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS outreach_revisions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              thread_id INTEGER NOT NULL,
+              version INTEGER NOT NULL,
+              subject TEXT NOT NULL,
+              body TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(thread_id, version),
+              FOREIGN KEY(thread_id) REFERENCES outreach_threads(id)
             );
 
             CREATE TABLE IF NOT EXISTS events (
@@ -229,6 +266,22 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_writing_tasks_status "
             "ON writing_tasks(status, created_at)"
+        )
+        contact_columns = {
+            "verification_status": "TEXT NOT NULL DEFAULT 'unverified'",
+            "notes": "TEXT NOT NULL DEFAULT ''",
+            "updated_at": "TEXT NOT NULL DEFAULT ''",
+        }
+        existing_contact_columns = {
+            item["name"] for item in conn.execute("PRAGMA table_info(contacts)").fetchall()
+        }
+        for name, definition in contact_columns.items():
+            if name not in existing_contact_columns:
+                conn.execute(f"ALTER TABLE contacts ADD COLUMN {name} {definition}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_outreach_threads_status "
+            "ON outreach_threads(status, queued_at, id)"
         )
         defaults = {
             "mode": "review",

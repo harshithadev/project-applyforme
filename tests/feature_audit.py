@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import threading
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -70,8 +71,12 @@ def request_json(url: str, payload: dict[str, object] | None = None) -> dict[str
         headers={"Content-Type": "application/json"} if data else {},
         method="POST" if data else "GET",
     )
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise AssertionError(f"{request.method} {url} returned {exc.code}: {body}") from exc
 
 
 def request_bytes(url: str) -> tuple[bytes, str, str]:
@@ -125,7 +130,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["APPLYFORME_ROOT"] = tmp
 
-        from job_agent import app, applications, automation, emailer, jobs, profile, writing
+        from job_agent import app, applications, automation, emailer, jobs, outreach, profile, writing
         from job_agent.config import DOCS_DIR
         from job_agent.db import init_db, log, row, rows, set_setting
         from job_agent.latex import available_latex_engine
@@ -299,9 +304,48 @@ def main() -> None:
                 }
             )
             emailer.smtplib.SMTP = FakeSMTP
-            first_email = emailer.send_email("manager@example.test", "Hello", "Body")
-            second_email = emailer.send_email("manager@example.test", "Hello", "Body")
-            third_email = emailer.send_email("manager@example.test", "Hello", "Body")
+            direct_email = emailer.send_email("manager@example.test", "Hello", "Body")
+            first_contact = outreach.create_contact(
+                {
+                    "company": "ExampleCo",
+                    "name": "Morgan",
+                    "role": "Engineering Manager",
+                    "email": "manager@example.test",
+                }
+            )
+            first_thread = outreach.create_draft(int(second_app["id"]), int(first_contact["id"]))
+            first_thread = outreach.save_draft(
+                int(first_thread["id"]),
+                first_thread["active_revision"]["subject"],
+                first_thread["active_revision"]["body"],
+            )
+            try:
+                outreach.queue(int(first_thread["id"]))
+                unapproved_blocked = False
+            except ValueError:
+                unapproved_blocked = True
+            outreach.approve(int(first_thread["id"]))
+            outreach.queue(int(first_thread["id"]))
+            first_email = outreach.process_next()
+
+            second_contact = outreach.create_contact(
+                {"company": "ExampleCo", "name": "Riley", "email": "riley@example.test"}
+            )
+            second_thread = outreach.create_draft(int(second_app["id"]), int(second_contact["id"]))
+            outreach.approve(int(second_thread["id"]))
+            outreach.queue(int(second_thread["id"]))
+            second_email = outreach.process_next()
+
+            third_contact = outreach.create_contact(
+                {"company": "ExampleCo", "name": "Casey", "email": "casey@example.test"}
+            )
+            third_thread = outreach.create_draft(int(second_app["id"]), int(third_contact["id"]))
+            outreach.approve(int(third_thread["id"]))
+            try:
+                outreach.queue(int(third_thread["id"]))
+                third_blocked = False
+            except ValueError as exc:
+                third_blocked = "limit" in str(exc).lower()
         finally:
             emailer.smtplib.SMTP = old_smtp
             for key, value in old_env.items():
@@ -309,15 +353,30 @@ def main() -> None:
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
-        if first_email["status"] == second_email["status"] == "sent" and third_email["status"] == "blocked":
-            record("PASS", "SMTP sending and daily email limit", "SMTP flow works and stops at the configured daily limit.")
+        if first_email["status"] == second_email["status"] == "sent" and third_blocked and FakeSMTP.sent == 2:
+            record("PASS", "SMTP sending and daily email limit", "Approved SMTP delivery stops at the configured daily limit.")
         else:
-            record("FAIL", "SMTP sending and daily email limit", f"Results: {first_email}, {second_email}, {third_email}")
-        record(
-            "FAIL",
-            "Email approval mode",
-            "The send function ignores email_mode=approval and sends immediately when called.",
-        )
+            record(
+                "FAIL",
+                "SMTP sending and daily email limit",
+                f"Results: first={first_email}, second={second_email}, third_blocked={third_blocked}",
+            )
+        if direct_email["status"] == "blocked" and unapproved_blocked and first_email["status"] == "sent":
+            record("PASS", "Email approval mode", "Direct and unapproved sends are blocked; approved outreach is delivered.")
+        else:
+            record(
+                "FAIL",
+                "Email approval mode",
+                f"direct={direct_email}, unapproved_blocked={unapproved_blocked}, sent={first_email}",
+            )
+        if len(first_thread["revisions"]) == 2 and outreach.get_thread(int(first_thread["id"]))["status"] == "sent":
+            record(
+                "PASS",
+                "Hiring-manager outreach workflow",
+                "Contacts move through versioned draft, approval, queue, delivery, and audit states.",
+            )
+        else:
+            record("FAIL", "Hiring-manager outreach workflow", "The outreach thread did not complete its workflow.")
 
         api_handler = QuietAppHandler.build(app.Handler)
         with running_server(api_handler) as dashboard_url:
@@ -325,10 +384,30 @@ def main() -> None:
             created = request_json(
                 f"{dashboard_url}/api/jobs",
                 {
-                    "title": "API Engineer",
+                    "title": "Platform Engineer",
                     "company": "WebCo",
                     "url": "https://example.test/jobs/api-engineer",
-                    "description": "Python API",
+                    "description": "Build Python and TypeScript services, reliable APIs, SQL systems, and cloud automation.",
+                },
+            )
+            api_application = request_json(
+                f"{dashboard_url}/api/applications/draft",
+                {"job_id": int(created["id"])},
+            )
+            api_contact = request_json(
+                f"{dashboard_url}/api/contacts",
+                {
+                    "company": "WebCo",
+                    "name": "Taylor",
+                    "role": "Hiring Manager",
+                    "email": "taylor@webco.example",
+                },
+            )
+            api_outreach = request_json(
+                f"{dashboard_url}/api/outreach/draft",
+                {
+                    "application_id": int(api_application["id"]),
+                    "contact_id": int(api_contact["id"]),
                 },
             )
             compiled = request_json(
@@ -341,7 +420,13 @@ def main() -> None:
             tex_body, tex_type, tex_disposition = request_bytes(
                 f"{dashboard_url}/api/applications/artifact?application_id={app_record['id']}&kind=tex"
             )
-        api_ok = bool(state.get("settings") and created.get("id"))
+        api_ok = bool(
+            state.get("settings")
+            and created.get("id")
+            and api_application.get("id")
+            and api_contact.get("id")
+            and api_outreach.get("active_revision")
+        )
         artifact_ok = bool(
             compiled.get("resume_compile_status") == "compiled"
             and pdf_body.startswith(b"%PDF")
@@ -352,7 +437,7 @@ def main() -> None:
             and "attachment" in tex_disposition
         )
         if api_ok:
-            record("PASS", "Local dashboard API", "The website can read state and trigger write operations.")
+            record("PASS", "Local dashboard API", "The website can create applications, contacts, and outreach drafts.")
         else:
             record(
                 "FAIL",
@@ -411,7 +496,6 @@ def main() -> None:
         record("FAIL", "Playwright browser submission", "No ATS adapter submits forms; apply requests only return queued or blocked.")
         record("FAIL", "Background application worker", "There is no worker that consumes approved applications and submits them.")
         record("FAIL", "Hiring-manager discovery", "A contacts table exists, but no contact-finding or verification workflow exists.")
-        record("FAIL", "Hiring-manager outreach workflow", "There is no contact-to-draft-to-approval UI workflow.")
         codex = writing.codex_status(force=True)
         if codex["ready"] and codex["auth"] == "chatgpt":
             record(

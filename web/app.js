@@ -70,9 +70,11 @@ function render() {
   $("#modeBadge").textContent = formatMode(data.settings.mode);
   $("#latexBadge").textContent = data.latex_engine || "missing";
   $("#codexBadge").textContent = data.codex?.ready ? "ChatGPT ready" : "Unavailable";
+  $("#emailBadge").textContent = data.email?.configured ? formatMode(data.email.mode) : "Not configured";
   $("#docCount").textContent = data.profile.documents.length;
   $("#jobCount").textContent = data.jobs.length;
   $("#appCount").textContent = data.applications.length;
+  $("#outreachCount").textContent = (data.outreach || []).length;
   $("#eventCount").textContent = data.events.length;
   $("#docsPath").textContent = data.paths.docs;
   $("#dbPath").textContent = data.paths.database;
@@ -84,14 +86,17 @@ function render() {
   renderEvents("#logsList", data.events);
   renderJobs(data.jobs);
   renderApplications(data.applications);
+  renderOutreach(data.outreach || [], data.contacts || [], data.applications || []);
   renderRules(data.answer_rules || []);
   populateSettings(data.settings);
-  scheduleWritingRefresh(data.applications);
+  scheduleBackgroundRefresh(data.applications, data.outreach || []);
 }
 
-function scheduleWritingRefresh(applications) {
+function scheduleBackgroundRefresh(applications, outreach) {
   clearTimeout(state.writingPoll);
-  const active = applications.some((app) => ["queued", "running"].includes(app.writing?.task?.status));
+  const writingActive = applications.some((app) => ["queued", "running"].includes(app.writing?.task?.status));
+  const outreachActive = outreach.some((thread) => ["queued", "sending"].includes(thread.status));
+  const active = writingActive || outreachActive;
   state.writingPoll = active ? setTimeout(() => loadState().catch((error) => toast(error.message)), 3000) : null;
 }
 
@@ -337,6 +342,115 @@ function collectWritingContent(button) {
   return content;
 }
 
+function companyKey(value) {
+  return String(value || "").toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+}
+
+function populateOutreachOptions(contacts, applications) {
+  const applicationSelect = $("#outreachApplication");
+  const previousApplication = applicationSelect.value;
+  applicationSelect.innerHTML = applications.length
+    ? applications.map((app) => `<option value="${app.id}">${escapeHtml(app.title)} · ${escapeHtml(app.company)}</option>`).join("")
+    : `<option value="">No applications</option>`;
+  if ([...applicationSelect.options].some((option) => option.value === previousApplication)) {
+    applicationSelect.value = previousApplication;
+  }
+  updateOutreachContactOptions(contacts, applications);
+}
+
+function updateOutreachContactOptions(contacts = state.data.contacts || [], applications = state.data.applications || []) {
+  const applicationId = Number($("#outreachApplication").value);
+  const application = applications.find((item) => Number(item.id) === applicationId);
+  const contactSelect = $("#outreachContact");
+  const previousContact = contactSelect.value;
+  const matching = application
+    ? contacts.filter((contact) => companyKey(contact.company) === companyKey(application.company))
+    : [];
+  contactSelect.innerHTML = matching.length
+    ? matching.map((contact) => `<option value="${contact.id}">${escapeHtml(contact.name || contact.email)} · ${escapeHtml(contact.email)}</option>`).join("")
+    : `<option value="">No matching contacts</option>`;
+  if ([...contactSelect.options].some((option) => option.value === previousContact)) {
+    contactSelect.value = previousContact;
+  }
+  $("#outreachForm").querySelector('button[type="submit"]').disabled = !application || !matching.length;
+}
+
+function renderOutreach(threads, contacts, applications) {
+  $("#contactCount").textContent = `${contacts.length} contact${contacts.length === 1 ? "" : "s"}`;
+  $("#outreachQueueMeta").textContent = `${threads.length} thread${threads.length === 1 ? "" : "s"}`;
+  $("#emailLimitMeta").textContent = `${Number(state.data.email?.sent_today || 0)} / ${Number(state.data.email?.daily_limit || 0)} sent today`;
+  populateOutreachOptions(contacts, applications);
+
+  const target = $("#outreachList");
+  if (!threads.length) {
+    target.innerHTML = `<div class="empty">No outreach drafts yet.</div>`;
+    return;
+  }
+  const approvalMode = state.data.email?.mode === "approval";
+  const deliveryAvailable = Boolean(state.data.email?.available);
+  target.innerHTML = threads.map((thread) => {
+    const revision = thread.active_revision || {};
+    const editable = ["draft", "approved", "failed", "uncertain"].includes(thread.status);
+    const stale = Number(thread.writing_version_id) !== Number(thread.current_writing_version_id);
+    const canApprove = thread.status === "draft" && !stale;
+    const canQueue = !stale && deliveryAvailable && (
+      ["approved", "failed", "uncertain"].includes(thread.status) || (!approvalMode && thread.status === "draft")
+    );
+    const revisions = (thread.revisions || []).map((item) => `
+      <div class="version-row">
+        <details>
+          <summary>v${item.version} · ${escapeHtml(item.created_at)}</summary>
+          <strong>${escapeHtml(item.subject)}</strong>
+          <pre>${escapeHtml(item.body)}</pre>
+        </details>
+        ${Number(item.id) === Number(thread.active_revision_id) ? `<strong>Current</strong>` : ""}
+      </div>
+    `).join("");
+    return `
+      <article class="outreach-card">
+        <div class="card-head">
+          <div>
+            <h4>${escapeHtml(thread.contact_name || thread.recipient_email)}</h4>
+            <p class="meta">${escapeHtml(thread.contact_role || "Contact")} · ${escapeHtml(thread.company)} · ${escapeHtml(thread.recipient_email)}</p>
+          </div>
+          <span class="status outreach-status ${escapeHtml(thread.status)}">${escapeHtml(thread.status)}</span>
+        </div>
+        <p class="outreach-context">${escapeHtml(thread.title)} · writing v${thread.writing_version_id}${stale ? " · writing changed" : ""}</p>
+        ${thread.last_error ? `<p class="error-text">${escapeHtml(thread.last_error)}</p>` : ""}
+        <div class="outreach-editor">
+          <label>Subject
+            <input data-outreach-subject value="${escapeHtml(revision.subject || "")}" ${editable ? "" : "disabled"} />
+          </label>
+          <label>Message
+            <textarea data-outreach-body class="tall-text" ${editable ? "" : "disabled"}>${escapeHtml(revision.body || "")}</textarea>
+          </label>
+        </div>
+        <div class="card-actions">
+          <button data-action="outreach-save" data-thread="${thread.id}" class="secondary" ${editable ? "" : "disabled"}>Save new version</button>
+          <button data-action="outreach-approve" data-thread="${thread.id}" ${canApprove ? "" : "disabled"}>Approve</button>
+          <button data-action="outreach-queue" data-thread="${thread.id}" class="warn" ${canQueue ? "" : "disabled"}>${["failed", "uncertain"].includes(thread.status) ? "Retry" : "Queue email"}</button>
+        </div>
+        <div class="delivery-meta">
+          <span>Attempts ${Number(thread.attempt_count || 0)} / 3</span>
+          <span>${thread.sent_at ? `Sent ${escapeHtml(thread.sent_at)}` : `Revision v${revision.version || 1}`}</span>
+        </div>
+        <details class="version-history">
+          <summary>Revision history (${(thread.revisions || []).length})</summary>
+          ${revisions}
+        </details>
+      </article>
+    `;
+  }).join("");
+}
+
+function collectOutreachRevision(button) {
+  const card = button.closest(".outreach-card");
+  return {
+    subject: card.querySelector("[data-outreach-subject]").value,
+    body: card.querySelector("[data-outreach-body]").value
+  };
+}
+
 function renderRules(rules) {
   const target = $("#rulesList");
   if (!target) return;
@@ -369,6 +483,7 @@ function setView(view) {
     overview: ["Overview", "Track documents, jobs, applications, and agent actions."],
     jobs: ["Jobs", "Add postings, scan configured career pages, and draft packages."],
     applications: ["Applications", "Approve, submit, or queue browser automation."],
+    outreach: ["Outreach", "Review contacts, approve messages, and track delivery."],
     settings: ["Settings", "Tune modes, limits, target companies, and source URLs."],
     logs: ["Logs", "Plain-English worker activity and blockers."]
   };
@@ -434,6 +549,25 @@ async function handleAction(action, button) {
         })
       });
       toast("Writing version restored. Review and approve it before applying.");
+    } else if (action === "outreach-save") {
+      const revision = collectOutreachRevision(button);
+      const result = await api("/api/outreach/save", {
+        method: "POST",
+        body: JSON.stringify({ thread_id: Number(button.dataset.thread), ...revision })
+      });
+      toast(`Outreach revision ${result.active_revision.version} saved. Approval reset.`);
+    } else if (action === "outreach-approve") {
+      await api("/api/outreach/approve", {
+        method: "POST",
+        body: JSON.stringify({ thread_id: Number(button.dataset.thread) })
+      });
+      toast("Outreach message approved.");
+    } else if (action === "outreach-queue") {
+      const result = await api("/api/outreach/queue", {
+        method: "POST",
+        body: JSON.stringify({ thread_id: Number(button.dataset.thread) })
+      });
+      toast(result.status === "sent" ? "Outreach was already sent." : "Outreach queued for delivery.");
     }
     await loadState();
   } catch (error) {
@@ -470,6 +604,33 @@ function bindEvents() {
     toast("Job saved.");
     await loadState();
   });
+
+  $("#contactForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+      await api("/api/contacts", { method: "POST", body: JSON.stringify(payload) });
+      event.currentTarget.reset();
+      toast("Contact added.");
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
+  $("#outreachForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+      await api("/api/outreach/draft", { method: "POST", body: JSON.stringify(payload) });
+      toast("Outreach draft ready for review.");
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
+  $("#outreachApplication").addEventListener("change", () => updateOutreachContactOptions());
 
   $("#settingsForm").addEventListener("submit", async (event) => {
     event.preventDefault();

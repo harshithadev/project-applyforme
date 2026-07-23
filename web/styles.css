@@ -211,7 +211,7 @@ main {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
   gap: 14px;
 }
 
@@ -269,7 +269,8 @@ main {
 .doc,
 .event,
 .job-card,
-.app-card {
+.app-card,
+.outreach-card {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
@@ -519,9 +520,64 @@ main {
   border-bottom: 1px solid var(--line);
 }
 
+.version-row details {
+  flex: 1;
+  padding: 8px 0;
+}
+
+.version-row details summary {
+  cursor: pointer;
+}
+
+.version-row pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+}
+
 .compact-btn {
   min-height: 30px;
   padding: 4px 9px;
+}
+
+.outreach-context {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.outreach-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.outreach-status.sent {
+  background: #e5f4ed;
+  color: #176344;
+}
+
+.outreach-status.failed,
+.outreach-status.uncertain {
+  background: #fbeaea;
+  color: var(--danger);
+}
+
+.outreach-status.approved,
+.outreach-status.queued,
+.outreach-status.sending {
+  background: #fff3d6;
+  color: var(--warning);
+}
+
+.delivery-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .score {
@@ -645,7 +701,7 @@ textarea {
   }
 
   nav {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .nav-item {
@@ -668,5 +724,9 @@ textarea {
   .writing-grid,
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .delivery-meta {
+    flex-direction: column;
   }
 }

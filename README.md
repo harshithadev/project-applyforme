@@ -16,7 +16,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - A local Codex writing queue that uses saved ChatGPT authentication instead of an OpenAI API key.
 - Application package tracking with review, approval, and submitted states.
 - Saved answer rules for repeated application-form questions.
-- Email sending limits and SMTP-backed sending endpoint.
+- Contact-specific outreach revisions, explicit approval, retry controls, and SMTP daily limits.
 - Plain-English activity log.
 
 ## What is intentionally guarded
@@ -123,6 +123,14 @@ export EMAIL_FROM=you@example.com
 npm run dev
 ```
 
+Add a contact in **Outreach**, select a matching application, and create a personalized draft. Editing creates an immutable revision and resets approval. In approval mode, only the current approved revision can enter the delivery queue. Delivery failures require an explicit retry, server interruptions are marked uncertain, and application writing changes require a new revision before sending.
+
+Run the contact, approval, delivery, retry, stale-writing, and daily-limit tests with:
+
+```bash
+npm run test:outreach
+```
+
 ## CLI
 
 ```bash
@@ -132,4 +140,5 @@ npm run scan-jobs
 python3 -m job_agent.cli draft <job_id>
 python3 -m job_agent.cli write <application_id>
 python3 -m job_agent.cli process-writing
+python3 -m job_agent.cli process-outreach
 ```
