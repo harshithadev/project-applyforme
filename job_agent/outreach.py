@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import threading
 from typing import Callable
@@ -76,7 +77,15 @@ def create_contact(value: object) -> dict[str, object]:
 
 
 def list_contacts() -> list[dict[str, object]]:
-    return rows("SELECT * FROM contacts ORDER BY company, name, email")
+    contacts = rows(
+        "SELECT * FROM contacts ORDER BY relevance_score DESC, confidence DESC, company, name, email"
+    )
+    for contact in contacts:
+        try:
+            contact["metadata"] = json.loads(str(contact.get("metadata") or "{}"))
+        except json.JSONDecodeError:
+            contact["metadata"] = {}
+    return contacts
 
 
 def _validate_message(subject: object, body: object) -> tuple[str, str]:
@@ -182,11 +191,14 @@ def create_draft(application_id: int, contact_id: int) -> dict[str, object]:
         (application_id, contact_id),
     )
     if existing:
+        _assert_contact_trusted(existing)
         return _with_revisions(existing)
     application = _application_for_outreach(application_id)
     contact = row("SELECT * FROM contacts WHERE id = ?", (contact_id,))
     if not contact:
         raise ValueError(f"Contact {contact_id} does not exist")
+    if contact.get("verification_status") not in {"manual", "published", "verified"}:
+        raise ValueError("Verify this contact before creating outreach")
     if _company_key(contact["company"]) != _company_key(application["company"]):
         raise ValueError("The contact company does not match the application company")
     recipient = _validate_email(contact["email"])
@@ -281,12 +293,18 @@ def _assert_current_writing(thread: dict[str, object]) -> None:
         raise ValueError("The outreach message references an invalid writing version")
 
 
+def _assert_contact_trusted(thread: dict[str, object]) -> None:
+    if thread.get("verification_status") not in {"manual", "published", "verified"}:
+        raise ValueError("Verify this contact before approving or sending outreach")
+
+
 def approve(thread_id: int) -> dict[str, object]:
     thread = get_thread(thread_id)
     if not thread:
         raise ValueError(f"Outreach thread {thread_id} does not exist")
     if thread["status"] != "draft":
         raise ValueError("Only a draft outreach message can be approved")
+    _assert_contact_trusted(thread)
     _assert_current_writing(thread)
     active_revision_id = int(thread.get("active_revision_id") or 0)
     if not active_revision_id:
@@ -314,6 +332,7 @@ def queue(thread_id: int) -> dict[str, object]:
         return thread
     if thread["status"] not in {"draft", "approved", "failed", "uncertain"}:
         raise ValueError(f"Outreach thread cannot be queued from status {thread['status']}")
+    _assert_contact_trusted(thread)
     _assert_current_writing(thread)
     active_revision_id = int(thread.get("active_revision_id") or 0)
     approved_revision_id = int(thread.get("approved_revision_id") or 0)
@@ -371,6 +390,7 @@ def process_next(
     thread_id = int(thread["id"])
     delivered = False
     try:
+        _assert_contact_trusted(thread)
         _assert_current_writing(thread)
         revision = thread.get("active_revision")
         if not isinstance(revision, dict):

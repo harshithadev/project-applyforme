@@ -8,7 +8,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import applications, automation, emailer, jobs, outreach, profile, writing
+from . import applications, automation, contact_discovery, emailer, jobs, outreach, profile, writing
 from .config import GENERATED_DIR, WEB_DIR
 from .db import all_settings, db_info, init_db, log, rows, set_setting
 from .latex import available_latex_engine
@@ -35,6 +35,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "applications": applications.list_applications(),
                     "answer_rules": rows("SELECT * FROM answer_rules ORDER BY updated_at DESC LIMIT 100"),
                     "contacts": outreach.list_contacts(),
+                    "contact_discovery_runs": contact_discovery.list_runs(),
                     "outreach": outreach.list_threads(),
                     "events": rows("SELECT * FROM events ORDER BY created_at DESC LIMIT 80"),
                     "paths": db_info(),
@@ -97,6 +98,17 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json({"id": applications.save_answer_rule(str(payload["question"]), str(payload["answer"]))})
             elif path == "/api/contacts":
                 self.json(outreach.create_contact(payload))
+            elif path == "/api/contacts/discover":
+                self.json(
+                    contact_discovery.discover_for_application(
+                        int(payload["application_id"]),
+                        str(payload.get("company_url", "")),
+                    )
+                )
+            elif path == "/api/contacts/verify":
+                self.json(contact_discovery.verify_contact(int(payload["contact_id"])))
+            elif path == "/api/contacts/reject":
+                self.json(contact_discovery.reject_contact(int(payload["contact_id"])))
             elif path == "/api/outreach/draft":
                 self.json(
                     outreach.create_draft(

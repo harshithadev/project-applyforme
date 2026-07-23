@@ -165,9 +165,32 @@ def init_db() -> None:
               source_url TEXT NOT NULL DEFAULT '',
               confidence INTEGER NOT NULL DEFAULT 0,
               verification_status TEXT NOT NULL DEFAULT 'unverified',
+              email_kind TEXT NOT NULL DEFAULT 'manual',
+              relevance_score INTEGER NOT NULL DEFAULT 0,
+              metadata TEXT NOT NULL DEFAULT '{}',
+              discovery_run_id INTEGER,
               notes TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL DEFAULT ''
+              updated_at TEXT NOT NULL DEFAULT '',
+              discovered_at TEXT NOT NULL DEFAULT '',
+              verified_at TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS contact_discovery_runs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              application_id INTEGER NOT NULL,
+              company TEXT NOT NULL,
+              seed_url TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'running',
+              pages_scanned INTEGER NOT NULL DEFAULT 0,
+              candidates_found INTEGER NOT NULL DEFAULT 0,
+              contacts_added INTEGER NOT NULL DEFAULT 0,
+              contacts_updated INTEGER NOT NULL DEFAULT 0,
+              error TEXT NOT NULL DEFAULT '',
+              log TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL,
+              completed_at TEXT NOT NULL DEFAULT '',
+              FOREIGN KEY(application_id) REFERENCES applications(id)
             );
 
             CREATE TABLE IF NOT EXISTS outreach_threads (
@@ -269,8 +292,14 @@ def init_db() -> None:
         )
         contact_columns = {
             "verification_status": "TEXT NOT NULL DEFAULT 'unverified'",
+            "email_kind": "TEXT NOT NULL DEFAULT 'manual'",
+            "relevance_score": "INTEGER NOT NULL DEFAULT 0",
+            "metadata": "TEXT NOT NULL DEFAULT '{}'",
+            "discovery_run_id": "INTEGER",
             "notes": "TEXT NOT NULL DEFAULT ''",
             "updated_at": "TEXT NOT NULL DEFAULT ''",
+            "discovered_at": "TEXT NOT NULL DEFAULT ''",
+            "verified_at": "TEXT NOT NULL DEFAULT ''",
         }
         existing_contact_columns = {
             item["name"] for item in conn.execute("PRAGMA table_info(contacts)").fetchall()
@@ -278,7 +307,18 @@ def init_db() -> None:
         for name, definition in contact_columns.items():
             if name not in existing_contact_columns:
                 conn.execute(f"ALTER TABLE contacts ADD COLUMN {name} {definition}")
+        conn.execute(
+            """
+            UPDATE contacts SET verification_status = 'manual'
+            WHERE email_kind = 'manual' AND verification_status = 'unverified'
+              AND discovery_run_id IS NULL
+            """
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_contact_discovery_runs_application "
+            "ON contact_discovery_runs(application_id, created_at)"
+        )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_outreach_threads_status "
             "ON outreach_threads(status, queued_at, id)"
@@ -295,6 +335,7 @@ def init_db() -> None:
             "target_companies": "",
             "career_urls": "",
             "email_mode": "approval",
+            "contact_discovery_max_pages": "8",
         }
         for key, value in defaults.items():
             conn.execute(

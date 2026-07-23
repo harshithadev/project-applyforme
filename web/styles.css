@@ -580,6 +580,67 @@ main {
   font-size: 12px;
 }
 
+.contact-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.contact-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.contact-row p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.contact-row span,
+.contact-row a {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.contact-row a {
+  margin-left: 6px;
+}
+
+.contact-row.rejected {
+  opacity: 0.62;
+}
+
+.contact-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.contact-status.published,
+.contact-status.verified,
+.contact-status.manual {
+  background: #e5f4ed;
+  color: #176344;
+}
+
+.contact-status.unverified {
+  background: #fff3d6;
+  color: var(--warning);
+}
+
+.contact-status.rejected {
+  background: #fbeaea;
+  color: var(--danger);
+}
+
 .score {
   color: var(--accent-2);
   font-weight: 700;
@@ -728,5 +789,13 @@ textarea {
 
   .delivery-meta {
     flex-direction: column;
+  }
+
+  .contact-row {
+    flex-direction: column;
+  }
+
+  .contact-actions {
+    justify-content: flex-start;
   }
 }

@@ -86,7 +86,12 @@ function render() {
   renderEvents("#logsList", data.events);
   renderJobs(data.jobs);
   renderApplications(data.applications);
-  renderOutreach(data.outreach || [], data.contacts || [], data.applications || []);
+  renderOutreach(
+    data.outreach || [],
+    data.contacts || [],
+    data.applications || [],
+    data.contact_discovery_runs || []
+  );
   renderRules(data.answer_rules || []);
   populateSettings(data.settings);
   scheduleBackgroundRefresh(data.applications, data.outreach || []);
@@ -364,7 +369,10 @@ function updateOutreachContactOptions(contacts = state.data.contacts || [], appl
   const contactSelect = $("#outreachContact");
   const previousContact = contactSelect.value;
   const matching = application
-    ? contacts.filter((contact) => companyKey(contact.company) === companyKey(application.company))
+    ? contacts.filter((contact) =>
+        companyKey(contact.company) === companyKey(application.company)
+        && ["manual", "published", "verified"].includes(contact.verification_status)
+      )
     : [];
   contactSelect.innerHTML = matching.length
     ? matching.map((contact) => `<option value="${contact.id}">${escapeHtml(contact.name || contact.email)} · ${escapeHtml(contact.email)}</option>`).join("")
@@ -375,11 +383,46 @@ function updateOutreachContactOptions(contacts = state.data.contacts || [], appl
   $("#outreachForm").querySelector('button[type="submit"]').disabled = !application || !matching.length;
 }
 
-function renderOutreach(threads, contacts, applications) {
+function renderContacts(contacts) {
+  const target = $("#contactsList");
+  if (!contacts.length) {
+    target.innerHTML = `<div class="empty">No contacts yet.</div>`;
+    return;
+  }
+  target.innerHTML = contacts.map((contact) => {
+    const unverified = contact.verification_status === "unverified";
+    const rejected = contact.verification_status === "rejected";
+    const sourceLink = String(contact.source_url || "").startsWith("http")
+      ? `<a href="${escapeHtml(contact.source_url)}" target="_blank" rel="noreferrer">Source</a>`
+      : "";
+    return `
+      <div class="contact-row ${rejected ? "rejected" : ""}">
+        <div>
+          <strong>${escapeHtml(contact.name || contact.email)}</strong>
+          <p>${escapeHtml(contact.role || "Contact")} · ${escapeHtml(contact.email)}</p>
+          <span>${escapeHtml(contact.company)} · ${escapeHtml(contact.email_kind || "manual")} · relevance ${Number(contact.relevance_score || 0)} ${sourceLink}</span>
+        </div>
+        <div class="contact-actions">
+          <span class="status contact-status ${escapeHtml(contact.verification_status)}">${escapeHtml(contact.verification_status)}</span>
+          ${unverified ? `<button data-action="contact-verify" data-contact="${contact.id}" class="compact-btn">Verify</button>` : ""}
+          ${!rejected && contact.email_kind !== "manual" ? `<button data-action="contact-reject" data-contact="${contact.id}" class="secondary compact-btn">Reject</button>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderOutreach(threads, contacts, applications, discoveryRuns) {
   $("#contactCount").textContent = `${contacts.length} contact${contacts.length === 1 ? "" : "s"}`;
   $("#outreachQueueMeta").textContent = `${threads.length} thread${threads.length === 1 ? "" : "s"}`;
   $("#emailLimitMeta").textContent = `${Number(state.data.email?.sent_today || 0)} / ${Number(state.data.email?.daily_limit || 0)} sent today`;
+  const latestRun = discoveryRuns[0];
+  $("#discoveryRunMeta").textContent = latestRun
+    ? `${formatMode(latestRun.status)} · ${Number(latestRun.pages_scanned || 0)} pages · ${Number(latestRun.candidates_found || 0)} candidates`
+    : "";
+  $("#discoverContactsBtn").disabled = !applications.length;
   populateOutreachOptions(contacts, applications);
+  renderContacts(contacts);
 
   const target = $("#outreachList");
   if (!threads.length) {
@@ -392,10 +435,11 @@ function renderOutreach(threads, contacts, applications) {
     const revision = thread.active_revision || {};
     const editable = ["draft", "approved", "failed", "uncertain"].includes(thread.status);
     const stale = Number(thread.writing_version_id) !== Number(thread.current_writing_version_id);
-    const canApprove = thread.status === "draft" && !stale;
+    const trustedContact = ["manual", "published", "verified"].includes(thread.verification_status);
+    const canApprove = thread.status === "draft" && !stale && trustedContact;
     const canQueue = !stale && deliveryAvailable && (
       ["approved", "failed", "uncertain"].includes(thread.status) || (!approvalMode && thread.status === "draft")
-    );
+    ) && trustedContact;
     const revisions = (thread.revisions || []).map((item) => `
       <div class="version-row">
         <details>
@@ -568,6 +612,20 @@ async function handleAction(action, button) {
         body: JSON.stringify({ thread_id: Number(button.dataset.thread) })
       });
       toast(result.status === "sent" ? "Outreach was already sent." : "Outreach queued for delivery.");
+    } else if (action === "contact-verify") {
+      if (!window.confirm("Confirm that you verified this inferred email address from a reliable source.")) return;
+      await api("/api/contacts/verify", {
+        method: "POST",
+        body: JSON.stringify({ contact_id: Number(button.dataset.contact) })
+      });
+      toast("Contact verified for outreach.");
+    } else if (action === "contact-reject") {
+      if (!window.confirm("Reject this discovered contact? Existing unsent outreach will remain blocked.")) return;
+      await api("/api/contacts/reject", {
+        method: "POST",
+        body: JSON.stringify({ contact_id: Number(button.dataset.contact) })
+      });
+      toast("Contact rejected.");
     }
     await loadState();
   } catch (error) {
@@ -631,6 +689,26 @@ function bindEvents() {
   });
 
   $("#outreachApplication").addEventListener("change", () => updateOutreachContactOptions());
+
+  $("#discoverContactsBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api("/api/contacts/discover", {
+        method: "POST",
+        body: JSON.stringify({
+          application_id: Number($("#outreachApplication").value),
+          company_url: $("#contactDiscoveryUrl").value
+        })
+      });
+      toast(`Discovery complete: ${result.contacts_added} new, ${result.contacts_updated} refreshed.`);
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   $("#settingsForm").addEventListener("submit", async (event) => {
     event.preventDefault();

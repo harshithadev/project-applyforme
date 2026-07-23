@@ -34,9 +34,24 @@ class CareerFixture(BaseHTTPRequestHandler):
                 "<!doctype html><html><head><script type=\"application/ld+json\">"
                 f"{json.dumps(structured)}</script></head><body><h1>Platform Engineer</h1></body></html>"
             ).encode("utf-8")
+        elif self.path.startswith("/team"):
+            person = {
+                "@context": "https://schema.org",
+                "@type": "Person",
+                "name": "Public Manager",
+                "jobTitle": "Engineering Manager",
+                "email": "public.manager@example.test",
+            }
+            body = (
+                "<!doctype html><html><body><script type=\"application/ld+json\">"
+                f"{json.dumps(person)}</script></body></html>"
+            ).encode("utf-8")
+        elif self.path.startswith("/robots.txt"):
+            body = b"User-agent: *\nAllow: /\n"
         else:
             body = b"""<!doctype html><html><body>
             <a href="/jobs/platform-engineer?utm_source=audit">Platform Engineer - Python and TypeScript</a>
+            <a href="/team">Our Team</a>
             <a href="/about">About ExampleCo</a>
             </body></html>"""
         self.send_response(200)
@@ -130,7 +145,17 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["APPLYFORME_ROOT"] = tmp
 
-        from job_agent import app, applications, automation, emailer, jobs, outreach, profile, writing
+        from job_agent import (
+            app,
+            applications,
+            automation,
+            contact_discovery,
+            emailer,
+            jobs,
+            outreach,
+            profile,
+            writing,
+        )
         from job_agent.config import DOCS_DIR
         from job_agent.db import init_db, log, row, rows, set_setting
         from job_agent.latex import available_latex_engine
@@ -195,6 +220,25 @@ def main() -> None:
         job = row("SELECT * FROM jobs WHERE id = ?", (tailored_job_id,))
         assert job is not None
         app_record = applications.draft_application(int(job["id"]))
+        with running_server(CareerFixture) as company_url:
+            contact_run = contact_discovery.discover_for_application(int(app_record["id"]), company_url)
+        discovered_contact = row(
+            "SELECT * FROM contacts WHERE email = ?",
+            ("public.manager@example.test",),
+        )
+        if (
+            contact_run["contacts_added"] >= 1
+            and discovered_contact
+            and discovered_contact["verification_status"] == "published"
+            and discovered_contact["source_url"].endswith("/team")
+        ):
+            record(
+                "PASS",
+                "Hiring-manager discovery",
+                "Bounded public-page discovery ranks contacts and retains source-backed verification.",
+            )
+        else:
+            record("FAIL", "Hiring-manager discovery", f"run={contact_run}, contact={discovered_contact}")
         tex_path = Path(str(app_record["resume_tex_path"]))
         tex = tex_path.read_text(encoding="utf-8") if tex_path.exists() else ""
         expected_company = str(job["company"])
@@ -495,7 +539,6 @@ def main() -> None:
 
         record("FAIL", "Playwright browser submission", "No ATS adapter submits forms; apply requests only return queued or blocked.")
         record("FAIL", "Background application worker", "There is no worker that consumes approved applications and submits them.")
-        record("FAIL", "Hiring-manager discovery", "A contacts table exists, but no contact-finding or verification workflow exists.")
         codex = writing.codex_status(force=True)
         if codex["ready"] and codex["auth"] == "chatgpt":
             record(

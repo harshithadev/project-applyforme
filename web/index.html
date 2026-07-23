@@ -142,6 +142,7 @@
                 </label>
                 <button type="submit">Add contact</button>
               </form>
+              <div id="contactsList" class="contact-list"></div>
             </section>
 
             <section class="panel">
@@ -156,8 +157,13 @@
                 <label class="full-width">Contact
                   <select name="contact_id" id="outreachContact" required></select>
                 </label>
+                <label class="full-width">Company website
+                  <input id="contactDiscoveryUrl" name="company_url" type="url" />
+                </label>
+                <button type="button" id="discoverContactsBtn" class="secondary">Discover public contacts</button>
                 <button type="submit">Create draft</button>
               </form>
+              <p id="discoveryRunMeta" class="meta"></p>
             </section>
           </div>
 
@@ -204,6 +210,9 @@
               </label>
               <label>Maximum jobs per source
                 <input name="max_jobs_per_source" type="number" min="1" max="200" />
+              </label>
+              <label>Contact discovery pages
+                <input name="contact_discovery_max_pages" type="number" min="1" max="20" />
               </label>
               <label>Role keywords
                 <textarea name="role_keywords"></textarea>

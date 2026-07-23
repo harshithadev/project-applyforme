@@ -17,6 +17,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Application package tracking with review, approval, and submitted states.
 - Saved answer rules for repeated application-form questions.
 - Contact-specific outreach revisions, explicit approval, retry controls, and SMTP daily limits.
+- Bounded public company-page contact discovery with role ranking, source provenance, and verification gates.
 - Plain-English activity log.
 
 ## What is intentionally guarded
@@ -24,6 +25,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Browser submission is queued until Playwright and site-specific adapters are installed.
 - PDF compilation reports a clear blocked state when no supported local TeX engine is available.
 - Codex writing requires an explicit local queue action and a ChatGPT-authenticated Codex CLI session.
+- Social-network scraping is disabled; inferred email patterns cannot be used until explicitly verified.
 
 ## Run
 
@@ -131,6 +133,18 @@ Run the contact, approval, delivery, retry, stale-writing, and daily-limit tests
 npm run test:outreach
 ```
 
+## Contact discovery
+
+From **Outreach**, select an application and optionally enter the public company website before choosing **Discover public contacts**. Discovery stays on the same website, respects its robots policy, follows only company/team/contact-style links, and stops at the configured page limit.
+
+Published addresses retain their source page. Name-based `first.last` inferences are labeled unverified and are blocked from outreach until you explicitly verify them. Rejected contacts stay rejected across later scans. LinkedIn and other social-network pages are not scanned.
+
+Run the public-page parsing, ranking, provenance, deduplication, and verification tests with:
+
+```bash
+npm run test:contacts
+```
+
 ## CLI
 
 ```bash
@@ -141,4 +155,5 @@ python3 -m job_agent.cli draft <job_id>
 python3 -m job_agent.cli write <application_id>
 python3 -m job_agent.cli process-writing
 python3 -m job_agent.cli process-outreach
+python3 -m job_agent.cli discover-contacts <application_id> --url https://company.example
 ```
