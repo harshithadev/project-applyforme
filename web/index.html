@@ -199,6 +199,24 @@
               <label>Daily application limit
                 <input name="daily_application_limit" type="number" min="1" max="200" />
               </label>
+              <label>Final browser submission
+                <select name="browser_submit_enabled">
+                  <option value="false">Require final approval</option>
+                  <option value="true">Enable rules-autonomous submit</option>
+                </select>
+              </label>
+              <label>Sensitive saved answers
+                <select name="browser_allow_sensitive_answers">
+                  <option value="false">Pause for confirmation</option>
+                  <option value="true">Use saved answers</option>
+                </select>
+              </label>
+              <label>Browser window
+                <select name="browser_headless">
+                  <option value="true">Run in background</option>
+                  <option value="false">Show browser window</option>
+                </select>
+              </label>
               <label>Daily email limit
                 <input name="daily_email_limit" type="number" min="1" max="200" />
               </label>

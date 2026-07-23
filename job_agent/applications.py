@@ -186,6 +186,16 @@ def approve_application(application_id: int) -> None:
 def mark_application_submitted(application_id: int) -> None:
     with connect() as conn:
         conn.execute("UPDATE applications SET status = ?, updated_at = ? WHERE id = ?", ("submitted", now_iso(), application_id))
+        conn.execute(
+            """
+            UPDATE application_tasks
+            SET status = 'cancelled', current_step = 'cancelled',
+                message = 'Application was marked submitted outside this browser task.',
+                completed_at = ?, updated_at = ?
+            WHERE application_id = ? AND status IN ('queued', 'checkpoint')
+            """,
+            (now_iso(), now_iso(), application_id),
+        )
     log(f"Marked application {application_id} as submitted.")
 
 

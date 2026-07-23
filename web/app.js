@@ -1,7 +1,7 @@
 const state = {
   data: null,
   activeView: "overview",
-  writingPoll: null
+  workerPoll: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -85,7 +85,7 @@ function render() {
   renderEvents("#recentEvents", data.events.slice(0, 8));
   renderEvents("#logsList", data.events);
   renderJobs(data.jobs);
-  renderApplications(data.applications);
+  renderApplications(data.applications, data.application_tasks || []);
   renderOutreach(
     data.outreach || [],
     data.contacts || [],
@@ -94,15 +94,16 @@ function render() {
   );
   renderRules(data.answer_rules || []);
   populateSettings(data.settings);
-  scheduleBackgroundRefresh(data.applications, data.outreach || []);
+  scheduleBackgroundRefresh(data.applications, data.outreach || [], data.application_tasks || []);
 }
 
-function scheduleBackgroundRefresh(applications, outreach) {
-  clearTimeout(state.writingPoll);
+function scheduleBackgroundRefresh(applications, outreach, applicationTasks) {
+  clearTimeout(state.workerPoll);
   const writingActive = applications.some((app) => ["queued", "running"].includes(app.writing?.task?.status));
   const outreachActive = outreach.some((thread) => ["queued", "sending"].includes(thread.status));
-  const active = writingActive || outreachActive;
-  state.writingPoll = active ? setTimeout(() => loadState().catch((error) => toast(error.message)), 3000) : null;
+  const browserActive = applicationTasks.some((task) => ["queued", "running"].includes(task.status));
+  const active = writingActive || outreachActive || browserActive;
+  state.workerPoll = active ? setTimeout(() => loadState().catch((error) => toast(error.message)), 3000) : null;
 }
 
 function renderDocs(docs) {
@@ -197,13 +198,74 @@ function renderJobs(jobs) {
   `).join("");
 }
 
-function renderApplications(apps) {
+function renderBrowserTask(task) {
+  if (!task) return "";
+  const checkpoint = task.checkpoint || {};
+  const fields = checkpoint.fields || [];
+  const latestScreenshot = (task.screenshots || []).at(-1);
+  const screenshotUrl = latestScreenshot
+    ? `/api/applications/task-artifact?task_id=${encodeURIComponent(task.id)}&name=${encodeURIComponent(latestScreenshot)}`
+    : "";
+  const eventRows = (task.events || []).slice(-6).reverse().map((event) => `
+    <div class="task-event">
+      <span>${escapeHtml(event.message)}</span>
+      <small>${escapeHtml(event.created_at)}</small>
+    </div>
+  `).join("");
+  const answerFields = fields.map((field, index) => {
+    const options = field.options || [];
+    const question = field.question || `Required field ${index + 1}`;
+    const control = options.length
+      ? `<select data-checkpoint-answer data-question="${escapeHtml(question)}">
+          <option value="">Choose an answer</option>
+          ${options.filter(Boolean).map((option) => `<option value="${escapeHtml(option)}" ${option === field.suggested_answer ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        </select>`
+      : `<input data-checkpoint-answer data-question="${escapeHtml(question)}" value="${escapeHtml(field.suggested_answer || "")}" />`;
+    return `<label>${escapeHtml(question)}${control}</label>`;
+  }).join("");
+  const canContinue = !["final_review", "submission_uncertain", "unsupported_site"].includes(task.checkpoint_kind);
+  return `
+    <section class="browser-task ${escapeHtml(task.status)}">
+      <div class="browser-task-head">
+        <div>
+          <strong>Browser task #${task.id}</strong>
+          <p class="meta">${escapeHtml(task.adapter)} · attempt ${Number(task.attempt_count || 0)}</p>
+        </div>
+        <span class="status">${escapeHtml(task.status)}</span>
+      </div>
+      <p>${escapeHtml(task.message)}</p>
+      ${screenshotUrl ? `<a class="task-screenshot" href="${screenshotUrl}" target="_blank" rel="noreferrer"><img src="${screenshotUrl}" alt="Latest browser task screenshot" /></a>` : ""}
+      ${answerFields ? `<div class="checkpoint-fields">${answerFields}</div>` : ""}
+      <div class="card-actions">
+        ${task.status === "checkpoint" && task.checkpoint_kind === "final_review"
+          ? `<button data-action="task-submit" data-task="${task.id}" class="warn">Submit application</button>`
+          : ""}
+        ${task.status === "checkpoint" && canContinue
+          ? `<button data-action="task-resolve" data-task="${task.id}">Save answers and continue</button>`
+          : ""}
+        ${task.status === "checkpoint" && checkpoint.target_url
+          ? `<a class="button-link secondary" href="${escapeHtml(checkpoint.target_url)}" target="_blank" rel="noreferrer">Open application</a>`
+          : ""}
+        ${["queued", "checkpoint"].includes(task.status)
+          ? `<button data-action="task-cancel" data-task="${task.id}" class="secondary">Cancel task</button>`
+          : ""}
+      </div>
+      <details class="task-history">
+        <summary>Task activity (${(task.events || []).length})</summary>
+        ${eventRows}
+      </details>
+    </section>
+  `;
+}
+
+function renderApplications(apps, tasks) {
   const target = $("#applicationsList");
   if (!apps.length) {
     target.innerHTML = `<div class="empty">No application packages drafted yet.</div>`;
     return;
   }
   target.innerHTML = apps.map((app) => {
+    const browserTask = tasks.find((task) => Number(task.application_id) === Number(app.id));
     const compileStatus = String(app.resume_compile_status || "pending");
     const compileMeta = compileStatus === "compiled"
       ? `${Number(app.resume_pdf_pages || 0)} page${Number(app.resume_pdf_pages || 0) === 1 ? "" : "s"} · ${formatBytes(app.resume_pdf_bytes)} · ${escapeHtml(app.resume_compile_engine)}`
@@ -306,12 +368,13 @@ function renderApplications(apps) {
       </div>
       ${compilerDetails}
       ${writingWorkspace}
+      ${renderBrowserTask(browserTask)}
       <div class="card-actions">
         ${app.resume_pdf_path ? `<a class="button-link" href="${artifactBase}&kind=pdf" target="_blank" rel="noreferrer">Open PDF</a>` : ""}
         ${app.resume_tex_path ? `<a class="button-link secondary" href="${artifactBase}&kind=tex">Download LaTeX</a>` : ""}
         <button data-action="compile" data-app="${app.id}" class="secondary">Recompile PDF</button>
         <button data-action="approve" data-app="${app.id}">Approve</button>
-        <button data-action="apply" data-app="${app.id}" class="warn">Apply</button>
+        <button data-action="apply" data-app="${app.id}" class="warn" ${browserTask && ["queued", "running", "checkpoint"].includes(browserTask.status) ? "disabled" : ""}>Apply</button>
         <button data-action="submitted" data-app="${app.id}" class="secondary">Mark submitted</button>
       </div>
     </article>
@@ -563,6 +626,38 @@ async function handleAction(action, button) {
         body: JSON.stringify({ application_id: Number(button.dataset.app) })
       });
       toast(result.message || "Apply action queued.");
+    } else if (action === "task-resolve") {
+      const section = button.closest(".browser-task");
+      const answers = {};
+      section.querySelectorAll("[data-checkpoint-answer]").forEach((field) => {
+        if (field.value.trim()) answers[field.dataset.question] = field.value.trim();
+      });
+      const result = await api("/api/applications/task/resolve", {
+        method: "POST",
+        body: JSON.stringify({
+          task_id: Number(button.dataset.task),
+          answers,
+          save_rules: true
+        })
+      });
+      toast(result.message || "Browser task continued.");
+    } else if (action === "task-submit") {
+      if (!window.confirm("Submit this application now? This is the final external action.")) return;
+      const result = await api("/api/applications/task/resolve", {
+        method: "POST",
+        body: JSON.stringify({
+          task_id: Number(button.dataset.task),
+          approve_submit: true
+        })
+      });
+      toast(result.message || "Final submission approved.");
+    } else if (action === "task-cancel") {
+      if (!window.confirm("Cancel this browser application task?")) return;
+      await api("/api/applications/task/cancel", {
+        method: "POST",
+        body: JSON.stringify({ task_id: Number(button.dataset.task) })
+      });
+      toast("Browser application task cancelled.");
     } else if (action === "compile") {
       const result = await api("/api/applications/compile", {
         method: "POST",

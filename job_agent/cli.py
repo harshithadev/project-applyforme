@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from . import applications, contact_discovery, jobs, outreach, profile, writing
+from . import applications, automation, contact_discovery, jobs, outreach, profile, writing
 from .db import init_db, rows
 
 
@@ -18,6 +18,9 @@ def main() -> None:
     write.add_argument("application_id", type=int)
     sub.add_parser("process-writing")
     sub.add_parser("process-outreach")
+    apply = sub.add_parser("apply")
+    apply.add_argument("application_id", type=int)
+    sub.add_parser("process-application")
     discover_contacts = sub.add_parser("discover-contacts")
     discover_contacts.add_argument("application_id", type=int)
     discover_contacts.add_argument("--url", default="")
@@ -39,6 +42,10 @@ def main() -> None:
         print(writing.process_next_task() or {"status": "idle"})
     elif args.command == "process-outreach":
         print(outreach.process_next() or {"status": "idle"})
+    elif args.command == "apply":
+        print(automation.apply_application(args.application_id))
+    elif args.command == "process-application":
+        print(automation.process_next_task() or {"status": "idle"})
     elif args.command == "discover-contacts":
         print(contact_discovery.discover_for_application(args.application_id, args.url))
     elif args.command == "state":

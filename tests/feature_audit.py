@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -19,7 +20,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class CareerFixture(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        if self.path.startswith("/jobs/platform-engineer"):
+        if self.path.startswith("/ats/greenhouse"):
+            body = b"""<!doctype html><html><body>
+            <form action="/thanks" method="post" enctype="multipart/form-data">
+              <label for="first_name">First name</label>
+              <input id="first_name" name="first_name" required>
+              <label for="last_name">Last name</label>
+              <input id="last_name" name="last_name" required>
+              <label for="resume">Resume / CV</label>
+              <input id="resume" name="resume" type="file" accept=".pdf" required>
+              <button type="submit">Submit application</button>
+            </form>
+            </body></html>"""
+        elif self.path.startswith("/jobs/platform-engineer"):
             structured = {
                 "@context": "https://schema.org",
                 "@type": "JobPosting",
@@ -54,6 +67,16 @@ class CareerFixture(BaseHTTPRequestHandler):
             <a href="/team">Our Team</a>
             <a href="/about">About ExampleCo</a>
             </body></html>"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        self.rfile.read(length)
+        body = b"<html><body><h1>Thank you</h1><p>Your application was submitted.</p></body></html>"
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -537,8 +560,54 @@ def main() -> None:
         event = row("SELECT message FROM events WHERE message = ?", ("Plain-English audit event.",))
         record("PASS" if event else "FAIL", "Plain-English activity log", "Worker actions and blockers are recorded for the dashboard.")
 
-        record("FAIL", "Playwright browser submission", "No ATS adapter submits forms; apply requests only return queued or blocked.")
-        record("FAIL", "Background application worker", "There is no worker that consumes approved applications and submits them.")
+        try:
+            set_setting("daily_application_limit", "10")
+            set_setting("mode", "review")
+            set_setting("browser_submit_enabled", "false")
+            with running_server(CareerFixture) as ats_url:
+                browser_job_id = jobs.add_manual_job(
+                    {
+                        "title": "Browser Automation Engineer",
+                        "company": "Local ATS Fixture",
+                        "url": f"{ats_url}/ats/greenhouse?ats=greenhouse",
+                        "description": "Build Python and TypeScript services, reliable APIs, SQL systems, and cloud automation.",
+                    }
+                )
+                browser_app = applications.draft_application(browser_job_id)
+                applications.approve_application(int(browser_app["id"]))
+                browser_task = automation.apply_application(int(browser_app["id"]))
+                review_task = automation.process_next_task()
+                review_ready = bool(
+                    browser_task.get("adapter") == "greenhouse"
+                    and review_task
+                    and review_task.get("checkpoint_kind") == "final_review"
+                    and review_task.get("screenshots")
+                )
+                automation.resolve_checkpoint(int(review_task["id"]), approve_submit=True)
+                automation.start_worker()
+                deadline = time.monotonic() + 20
+                completed_task = automation.get_task(int(review_task["id"]))
+                while completed_task and completed_task["status"] in {"queued", "running"} and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                    completed_task = automation.get_task(int(review_task["id"]))
+            worker_completed = bool(completed_task and completed_task["status"] == "submitted")
+            record(
+                "PASS" if review_ready and worker_completed else "FAIL",
+                "Playwright browser submission",
+                "Greenhouse form filling, resume upload, screenshot review, and confirmed submission passed locally."
+                if review_ready and worker_completed
+                else f"review_ready={review_ready}, task={completed_task}",
+            )
+            record(
+                "PASS" if worker_completed else "FAIL",
+                "Background application worker",
+                "The persistent worker consumed an approved checkpoint and recorded the verified submission."
+                if worker_completed
+                else f"Worker result: {completed_task}",
+            )
+        except Exception as exc:
+            record("FAIL", "Playwright browser submission", f"Local ATS integration failed: {exc}")
+            record("FAIL", "Background application worker", f"Worker integration failed: {exc}")
         codex = writing.codex_status(force=True)
         if codex["ready"] and codex["auth"] == "chatgpt":
             record(

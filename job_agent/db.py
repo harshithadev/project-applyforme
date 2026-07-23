@@ -146,6 +146,43 @@ def init_db() -> None:
               FOREIGN KEY(application_id) REFERENCES applications(id)
             );
 
+            CREATE TABLE IF NOT EXISTS application_tasks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              application_id INTEGER NOT NULL,
+              adapter TEXT NOT NULL DEFAULT '',
+              target_url TEXT NOT NULL,
+              mode TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'queued',
+              current_step TEXT NOT NULL DEFAULT 'queued',
+              message TEXT NOT NULL DEFAULT '',
+              checkpoint_kind TEXT NOT NULL DEFAULT '',
+              checkpoint_json TEXT NOT NULL DEFAULT '{}',
+              answers_json TEXT NOT NULL DEFAULT '{}',
+              form_snapshot_json TEXT NOT NULL DEFAULT '[]',
+              result_json TEXT NOT NULL DEFAULT '{}',
+              screenshots_json TEXT NOT NULL DEFAULT '[]',
+              artifact_dir TEXT NOT NULL DEFAULT '',
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              final_submit_approved INTEGER NOT NULL DEFAULT 0,
+              submit_started_at TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              started_at TEXT NOT NULL DEFAULT '',
+              updated_at TEXT NOT NULL,
+              completed_at TEXT NOT NULL DEFAULT '',
+              FOREIGN KEY(application_id) REFERENCES applications(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS application_task_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id INTEGER NOT NULL,
+              level TEXT NOT NULL DEFAULT 'info',
+              step TEXT NOT NULL,
+              message TEXT NOT NULL,
+              meta TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(task_id) REFERENCES application_tasks(id)
+            );
+
             CREATE TABLE IF NOT EXISTS answer_rules (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               question TEXT NOT NULL UNIQUE,
@@ -290,6 +327,18 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_writing_tasks_status "
             "ON writing_tasks(status, created_at)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_application_tasks_status "
+            "ON application_tasks(status, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_application_tasks_application "
+            "ON application_tasks(application_id, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_application_task_events_task "
+            "ON application_task_events(task_id, created_at)"
+        )
         contact_columns = {
             "verification_status": "TEXT NOT NULL DEFAULT 'unverified'",
             "email_kind": "TEXT NOT NULL DEFAULT 'manual'",
@@ -336,6 +385,9 @@ def init_db() -> None:
             "career_urls": "",
             "email_mode": "approval",
             "contact_discovery_max_pages": "8",
+            "browser_headless": "true",
+            "browser_submit_enabled": "false",
+            "browser_allow_sensitive_answers": "false",
         }
         for key, value in defaults.items():
             conn.execute(

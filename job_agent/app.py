@@ -33,6 +33,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "profile": profile.profile_overview(),
                     "jobs": jobs.list_jobs(),
                     "applications": applications.list_applications(),
+                    "application_tasks": automation.list_tasks(),
                     "answer_rules": rows("SELECT * FROM answer_rules ORDER BY updated_at DESC LIMIT 100"),
                     "contacts": outreach.list_contacts(),
                     "contact_discovery_runs": contact_discovery.list_runs(),
@@ -48,6 +49,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/applications/artifact":
             self.send_application_artifact()
+            return
+        if path == "/api/applications/task-artifact":
+            self.send_application_task_artifact()
             return
         super().do_GET()
 
@@ -76,6 +80,17 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json({"ok": True})
             elif path == "/api/applications/apply":
                 self.json(automation.apply_application(int(payload["application_id"])))
+            elif path == "/api/applications/task/resolve":
+                self.json(
+                    automation.resolve_checkpoint(
+                        int(payload["task_id"]),
+                        payload.get("answers", {}),
+                        bool(payload.get("approve_submit", False)),
+                        bool(payload.get("save_rules", True)),
+                    )
+                )
+            elif path == "/api/applications/task/cancel":
+                self.json(automation.cancel_task(int(payload["task_id"])))
             elif path == "/api/applications/compile":
                 self.json(applications.recompile_application(int(payload["application_id"])))
             elif path == "/api/applications/writing/queue":
@@ -185,12 +200,43 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_application_task_artifact(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            task_id = int(query.get("task_id", [""])[0])
+        except ValueError:
+            self.send_error(400, "Invalid browser task ID")
+            return
+        name = Path(query.get("name", [""])[0]).name
+        task = automation.get_task(task_id)
+        if not task or name not in task.get("screenshots", []):
+            self.send_error(404, "Browser task screenshot not found")
+            return
+        artifact = (Path(str(task["artifact_dir"])) / name).resolve()
+        generated_root = (GENERATED_DIR / "browser" / "tasks").resolve()
+        if (
+            generated_root not in artifact.parents
+            or not artifact.is_file()
+            or artifact.suffix.lower() != ".png"
+        ):
+            self.send_error(404, "Browser task screenshot not found")
+            return
+        data = artifact.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Disposition", f'inline; filename="{name}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+
 
 def main() -> None:
     init_db()
     start_background_scanner()
     writing.start_writing_worker()
     outreach.start_worker()
+    automation.start_worker()
     WEB_DIR.mkdir(parents=True, exist_ok=True)
     host = "127.0.0.1"
     port = 8787

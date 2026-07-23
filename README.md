@@ -16,13 +16,19 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - A local Codex writing queue that uses saved ChatGPT authentication instead of an OpenAI API key.
 - Application package tracking with review, approval, and submitted states.
 - Saved answer rules for repeated application-form questions.
+- Persistent background browser tasks with Greenhouse and Lever application adapters.
+- Resume upload, plain-English task events, screenshots, and resumable question checkpoints.
+- CAPTCHA, login, sensitive-question, unknown-field, final-review, and uncertain-submission stops.
 - Contact-specific outreach revisions, explicit approval, retry controls, and SMTP daily limits.
 - Bounded public company-page contact discovery with role ranking, source provenance, and verification gates.
 - Plain-English activity log.
 
 ## What is intentionally guarded
 
-- Browser submission is queued until Playwright and site-specific adapters are installed.
+- Browser submission supports Greenhouse and Lever; other application systems stop at a manual checkpoint.
+- CAPTCHA challenges are never bypassed, and login-required forms stop for manual intervention.
+- Review and assisted modes always stop before the final submit action. Rules-autonomous final submission requires the separate **Final browser submission** setting.
+- Sensitive saved answers pause for confirmation unless explicitly enabled in settings.
 - PDF compilation reports a clear blocked state when no supported local TeX engine is available.
 - Codex writing requires an explicit local queue action and a ChatGPT-authenticated Codex CLI session.
 - Social-network scraping is disabled; inferred email patterns cannot be used until explicitly verified.
@@ -94,6 +100,13 @@ Run the discovery adapter and filter tests independently with:
 npm run test:jobs
 ```
 
+Run the persistent task lifecycle and real local Chromium adapter tests with:
+
+```bash
+npm run test:applications
+npm run test:browser
+```
+
 Run the writing version, validation, rollback, and isolated queue tests with:
 
 ```bash
@@ -155,5 +168,7 @@ python3 -m job_agent.cli draft <job_id>
 python3 -m job_agent.cli write <application_id>
 python3 -m job_agent.cli process-writing
 python3 -m job_agent.cli process-outreach
+python3 -m job_agent.cli apply <application_id>
+python3 -m job_agent.cli process-application
 python3 -m job_agent.cli discover-contacts <application_id> --url https://company.example
 ```
