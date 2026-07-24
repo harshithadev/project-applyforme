@@ -223,7 +223,16 @@ function renderBrowserTask(task) {
       : `<input data-checkpoint-answer data-question="${escapeHtml(question)}" value="${escapeHtml(field.suggested_answer || "")}" />`;
     return `<label>${escapeHtml(question)}${control}</label>`;
   }).join("");
-  const canContinue = !["final_review", "submission_uncertain", "unsupported_site"].includes(task.checkpoint_kind);
+  const canContinue = ![
+    "final_review",
+    "submission_uncertain",
+    "unsupported_site",
+    "unsupported_form",
+    "submit_control",
+    "step_limit",
+    "captcha",
+    "login"
+  ].includes(task.checkpoint_kind);
   return `
     <section class="browser-task ${escapeHtml(task.status)}">
       <div class="browser-task-head">

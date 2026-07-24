@@ -16,13 +16,18 @@ from .profile import structured_profile
 
 RISKY_PATTERNS = re.compile(
     r"salary|compensation|sponsor|visa|authorization|relocat|disabil|gender|race|"
-    r"ethnic|veteran|criminal|background|date of birth|age",
+    r"ethnic|veteran|criminal|background|date of birth|age|privacy|consent|"
+    r"data processing|terms and conditions",
     re.IGNORECASE,
 )
 SUCCESS_PATTERNS = re.compile(
     r"thank you|application (?:was )?(?:submitted|received)|we(?:'|’)ve received your application",
     re.IGNORECASE,
 )
+SUPPORTED_ADAPTERS = frozenset(
+    {"greenhouse", "lever", "ashby", "smartrecruiters", "workday"}
+)
+MAX_FORM_STEPS = 8
 _worker_event = threading.Event()
 _worker_lock = threading.Lock()
 _worker_started = False
@@ -103,6 +108,7 @@ def automation_status() -> dict[str, object]:
         "pending": int(pending["count"]) if pending else 0,
         "checkpoints": int(checkpoints["count"]) if checkpoints else 0,
         "final_submit_enabled": setting("browser_submit_enabled", "false") == "true",
+        "supported_adapters": sorted(SUPPORTED_ADAPTERS),
     }
 
 
@@ -124,12 +130,26 @@ def _adapter_name(target_url: str, source: str = "") -> str:
     hostname = (parsed.hostname or "").casefold()
     requested = parse_qs(parsed.query).get("ats", [""])[0].casefold()
     source_name = source.casefold()
-    if requested in {"greenhouse", "lever"}:
+    if requested in SUPPORTED_ADAPTERS:
         return requested
     if "greenhouse.io" in hostname or "greenhouse" in source_name:
         return "greenhouse"
     if "lever.co" in hostname or source_name == "lever":
         return "lever"
+    if "ashbyhq.com" in hostname or source_name == "ashby":
+        return "ashby"
+    if (
+        "smartrecruiters.com" in hostname
+        or hostname == "smrtr.io"
+        or "smartrecruiters" in source_name
+    ):
+        return "smartrecruiters"
+    if (
+        "myworkdayjobs.com" in hostname
+        or "myworkdaysite.com" in hostname
+        or "workday" in source_name
+    ):
+        return "workday"
     return "unsupported"
 
 
@@ -480,52 +500,115 @@ def _page_requires_login(page: Any) -> bool:
 def _find_form_surface(page: Any) -> Any:
     candidates = [page, *[frame for frame in page.frames if frame != page.main_frame]]
     for candidate in candidates:
-        if candidate.locator(
-            "input[type='file'], input[type='email'], "
-            "input[name*='first_name' i], input[name='name']"
-        ).count():
+        if candidate.locator("input[type='file']").count():
+            return candidate
+    for candidate in candidates:
+        has_email = candidate.locator("input[type='email'], input[name*='email' i]").count()
+        has_name = candidate.locator(
+            "input[name*='first_name' i], input[name*='firstName' i], input[name='name']"
+        ).count()
+        if has_email and has_name:
+            return candidate
+    for candidate in candidates:
+        if candidate.locator("form input[required], form textarea[required], form select[required]").count():
             return candidate
     return page
 
 
+def _surface_has_application_fields(surface: Any) -> bool:
+    if surface.locator("input[type='file']").count():
+        return True
+    has_email = surface.locator("input[type='email'], input[name*='email' i]").count()
+    has_name = surface.locator(
+        "input[name*='first_name' i], input[name*='firstName' i], input[name='name']"
+    ).count()
+    return bool(has_email and has_name)
+
+
+def _click_and_settle(page: Any, control: Any) -> None:
+    control.click(timeout=15_000)
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=15_000)
+    except Exception:
+        pass
+    page.wait_for_timeout(300)
+
+
 def _open_application_form(page: Any, adapter: str, task_id: int) -> Any:
     surface = _find_form_surface(page)
-    if surface.locator("input[type='file']").count():
+    if _surface_has_application_fields(surface):
         return surface
-    selectors = {
-        "greenhouse": (
-            "a:has-text('Apply for this job'), a:has-text('Apply now'), "
-            "a[href*='#app'], button:has-text('Apply now')"
-        ),
-        "lever": (
-            "a:has-text('Apply for this job'), a.postings-btn, "
-            "a[href$='/apply'], a[href*='/apply?']"
-        ),
+    special_selectors = {
+        "greenhouse": "a[href*='#app']",
+        "lever": "a.postings-btn, a[href$='/apply'], a[href*='/apply?']",
+        "ashby": "a[href$='/apply'], a[href*='/apply?']",
+        "smartrecruiters": "",
+        "workday": "[data-automation-id='jobPostingApplyButton']",
     }
-    apply_control = page.locator(selectors.get(adapter, "")).first
+    labels = {
+        "greenhouse": r"apply for this job|apply now|apply",
+        "lever": r"apply for this job|apply now|apply",
+        "ashby": r"apply for this job|apply now|apply",
+        "smartrecruiters": r"i['’]m interested|apply now|apply",
+        "workday": r"apply now|apply",
+    }
+    special = special_selectors.get(adapter, "")
+    apply_control = page.locator(special).first if special else None
+    if apply_control is None or not apply_control.count():
+        apply_control = page.locator("button, a").filter(
+            has_text=re.compile(
+                rf"^\s*(?:{labels.get(adapter, 'apply')})\s*$",
+                re.IGNORECASE,
+            )
+        ).first
     if apply_control.count():
         _record_task_event(task_id, "opening", "Opening the posting's application form.")
-        apply_control.click(timeout=15_000)
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=15_000)
-        except Exception:
-            pass
+        _click_and_settle(page, apply_control)
+        if adapter == "workday":
+            manual = page.locator("[data-automation-id='applyManually']").first
+            if not manual.count():
+                manual = page.locator("button, a").filter(
+                    has_text=re.compile(r"^\s*apply manually\s*$", re.IGNORECASE)
+                ).first
+            if manual.count():
+                _record_task_event(
+                    task_id,
+                    "opening",
+                    "Choosing Workday's manual application path.",
+                )
+                _click_and_settle(page, manual)
         return _find_form_surface(page)
     return surface
 
 
 def _submit_locator(page: Any, adapter: str) -> Any:
-    selectors = {
-        "greenhouse": (
-            "button[type='submit'], input[type='submit'], "
-            "button:has-text('Submit Application'), button:has-text('Submit')"
-        ),
-        "lever": (
-            "button[type='submit'], input[type='submit'], "
-            ".postings-btn, button:has-text('Submit application')"
-        ),
+    buttons = page.locator("button").filter(
+        has_text=re.compile(
+            r"^\s*(?:submit|submit application|send application)\s*$",
+            re.IGNORECASE,
+        )
+    )
+    if buttons.count():
+        return buttons.first
+    if adapter == "workday":
+        workday_submit = page.locator("[data-automation-id='submitButton']").first
+        if workday_submit.count():
+            return workday_submit
+    return page.locator("input[type='submit'][value*='Submit' i]").first
+
+
+def _continue_locator(page: Any, adapter: str) -> Any:
+    labels = {
+        "smartrecruiters": r"next|continue|save and continue",
+        "workday": r"next|save and continue|save & continue",
+        "ashby": r"next|continue",
     }
-    return page.locator(selectors.get(adapter, "button[type='submit'], input[type='submit']")).first
+    choices = labels.get(adapter)
+    if not choices:
+        return None
+    return page.locator("button, a").filter(
+        has_text=re.compile(rf"^\s*(?:{choices})\s*$", re.IGNORECASE)
+    ).first
 
 
 def _checkpoint(
@@ -542,11 +625,117 @@ def _checkpoint(
     }
 
 
+def _fill_application_step(
+    page: Any,
+    surface: Any,
+    task: dict[str, Any],
+    app: dict[str, Any],
+    answers: dict[str, Any],
+    step_number: int,
+) -> tuple[list[dict[str, Any]], str, dict[str, Any] | None]:
+    fields = _field_snapshot(surface)
+    missing: list[dict[str, Any]] = []
+    sensitive: list[dict[str, Any]] = []
+    resume_uploaded = False
+    cover_letter_path = Path(str(task["artifact_dir"])) / "cover-letter.txt"
+    cover_letter_path.write_text(str(app.get("cover_letter") or ""), encoding="utf-8")
+
+    for field in fields:
+        if field.get("disabled") or not field.get("visible"):
+            continue
+        field_type = str(field.get("type") or "")
+        if field_type in {"hidden", "submit", "button", "reset", "image"}:
+            continue
+        question = _question_for(field)
+        if field_type == "file":
+            locator = surface.locator("input, textarea, select").nth(int(field["index"]))
+            normalized = _normalize_question(question)
+            if "cover letter" in normalized:
+                locator.set_input_files(str(cover_letter_path))
+            elif "resume" in normalized or "cv" in normalized or not resume_uploaded:
+                locator.set_input_files(str(Path(str(app["resume_pdf_path"])).resolve()))
+                resume_uploaded = True
+            elif field.get("required"):
+                missing.append({"question": question, "type": "file", "options": []})
+            continue
+        if field.get("value") or field.get("checked"):
+            continue
+        identity_answer = _identity_answer(question, answers)
+        saved_answer, saved_risky = _rule_answer(question, answers)
+        answer = identity_answer or saved_answer
+        risky = bool(RISKY_PATTERNS.search(question)) or saved_risky
+        explicitly_answered = _normalize_question(question) in answers["explicit"]
+        allow_sensitive = setting("browser_allow_sensitive_answers", "false") == "true"
+        if risky and answer and not explicitly_answered and not allow_sensitive:
+            sensitive.append(
+                {
+                    "question": question,
+                    "type": field_type or field.get("tag"),
+                    "options": [item.get("label", "") for item in field.get("options", [])],
+                    "suggested_answer": answer,
+                }
+            )
+            continue
+        if answer:
+            try:
+                if _fill_control(surface, field, answer):
+                    continue
+            except Exception:
+                pass
+        if field.get("required"):
+            target = {
+                "question": question,
+                "type": field_type or field.get("tag"),
+                "options": [item.get("label", "") for item in field.get("options", [])],
+            }
+            (sensitive if risky else missing).append(target)
+
+    public_snapshot = _public_snapshot(_field_snapshot(surface))
+    for item in public_snapshot:
+        item["step"] = step_number
+    screenshot = _save_screenshot(page, task, f"02-step-{step_number}-filled")
+    if sensitive:
+        return (
+            public_snapshot,
+            screenshot,
+            _checkpoint(
+                "sensitive_question",
+                "Sensitive application questions need your explicit answer before the task can continue.",
+                sensitive,
+                screenshot=screenshot,
+                step=step_number,
+            ),
+        )
+    if missing:
+        return (
+            public_snapshot,
+            screenshot,
+            _checkpoint(
+                "unknown_field",
+                "Required fields remain unanswered. Add answers, then continue the task.",
+                missing,
+                screenshot=screenshot,
+                step=step_number,
+            ),
+        )
+    return public_snapshot, screenshot, None
+
+
+def _confirmation_text(page: Any) -> str:
+    content: list[str] = []
+    for frame in page.frames:
+        try:
+            content.append(frame.locator("body").inner_text(timeout=5_000))
+        except Exception:
+            continue
+    return "\n".join(content)
+
+
 def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, Any]:
-    if task["adapter"] not in {"greenhouse", "lever"}:
+    if task["adapter"] not in SUPPORTED_ADAPTERS:
         return _checkpoint(
             "unsupported_site",
-            "This site is not a supported Greenhouse or Lever application form. Open it for manual submission.",
+            "This site is not a supported ATS application form. Open it for manual submission.",
             target_url=task["target_url"],
         )
     if not playwright_available():
@@ -588,146 +777,124 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                     "The application requires a login. Sign in manually before continuing.",
                     target_url=task["target_url"],
                 )
-
-            fields = _field_snapshot(surface)
             answers = _candidate_answers(app, task)
-            missing: list[dict[str, Any]] = []
-            sensitive: list[dict[str, Any]] = []
-            resume_uploaded = False
-            cover_letter_path = Path(str(task["artifact_dir"])) / "cover-letter.txt"
-            cover_letter_path.write_text(str(app.get("cover_letter") or ""), encoding="utf-8")
-            _record_task_event(task_id, "filling", "Filling known identity, resume, and saved-answer fields.")
-
-            for field in fields:
-                if field.get("disabled") or not field.get("visible"):
-                    continue
-                field_type = str(field.get("type") or "")
-                if field_type in {"hidden", "submit", "button", "reset", "image"}:
-                    continue
-                question = _question_for(field)
-                if field_type == "file":
-                    locator = surface.locator("input, textarea, select").nth(int(field["index"]))
-                    normalized = _normalize_question(question)
-                    if "cover letter" in normalized:
-                        locator.set_input_files(str(cover_letter_path))
-                    elif "resume" in normalized or "cv" in normalized or not resume_uploaded:
-                        locator.set_input_files(str(Path(str(app["resume_pdf_path"])).resolve()))
-                        resume_uploaded = True
-                    elif field.get("required"):
-                        missing.append({"question": question, "type": "file", "options": []})
-                    continue
-                if field.get("value") or field.get("checked"):
-                    continue
-                identity_answer = _identity_answer(question, answers)
-                saved_answer, saved_risky = _rule_answer(question, answers)
-                answer = identity_answer or saved_answer
-                risky = bool(RISKY_PATTERNS.search(question)) or saved_risky
-                explicitly_answered = _normalize_question(question) in answers["explicit"]
-                allow_sensitive = setting("browser_allow_sensitive_answers", "false") == "true"
-                if risky and answer and not explicitly_answered and not allow_sensitive:
-                    sensitive.append(
-                        {
-                            "question": question,
-                            "type": field_type or field.get("tag"),
-                            "options": [item.get("label", "") for item in field.get("options", [])],
-                            "suggested_answer": answer,
-                        }
+            all_snapshots: list[dict[str, Any]] = []
+            for step_number in range(1, MAX_FORM_STEPS + 1):
+                surface = _find_form_surface(page)
+                if _page_has_captcha(page):
+                    return _checkpoint(
+                        "captcha",
+                        "The application presented a CAPTCHA. Automation stopped without attempting to bypass it.",
+                        target_url=page.url,
+                        step=step_number,
                     )
-                    continue
-                if answer:
+                if _page_requires_login(surface):
+                    return _checkpoint(
+                        "login",
+                        "The application requires a login. Sign in manually before continuing.",
+                        target_url=page.url,
+                        step=step_number,
+                    )
+                _record_task_event(
+                    task_id,
+                    "filling",
+                    f"Filling known fields on application step {step_number}.",
+                )
+                snapshot, screenshot, checkpoint = _fill_application_step(
+                    page,
+                    surface,
+                    task,
+                    app,
+                    answers,
+                    step_number,
+                )
+                all_snapshots.extend(snapshot)
+                with connect() as conn:
+                    conn.execute(
+                        "UPDATE application_tasks SET form_snapshot_json = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(all_snapshots), now_iso(), task_id),
+                    )
+                if checkpoint:
+                    return checkpoint
+
+                submit = _submit_locator(surface, str(task["adapter"]))
+                if submit.count():
+                    submit_enabled = setting("browser_submit_enabled", "false") == "true"
+                    autonomous = task["mode"] == "rules_autonomous" and submit_enabled
+                    explicitly_approved = bool(task.get("final_submit_approved"))
+                    if not autonomous and not explicitly_approved:
+                        return _checkpoint(
+                            "final_review",
+                            "The form is filled and ready. Review the screenshot, then explicitly approve final submission.",
+                            screenshot=screenshot,
+                            target_url=page.url,
+                            step=step_number,
+                        )
+                    limit = int(setting("daily_application_limit", "10") or "10")
+                    count = submitted_today_count()
+                    if count >= limit:
+                        return _checkpoint(
+                            "daily_limit",
+                            f"Final submission stopped because the daily limit was reached ({count}/{limit}).",
+                        )
+                    _record_task_event(
+                        task_id,
+                        "submitting",
+                        "Clicking the final application submit control.",
+                    )
+                    with connect() as conn:
+                        conn.execute(
+                            "UPDATE application_tasks SET submit_started_at = ?, updated_at = ? WHERE id = ?",
+                            (now_iso(), now_iso(), task_id),
+                        )
+                    submit.click(timeout=15_000)
                     try:
-                        if _fill_control(surface, field, answer):
-                            continue
-                    except Exception:
+                        page.wait_for_load_state("networkidle", timeout=10_000)
+                    except PlaywrightTimeoutError:
                         pass
-                if field.get("required"):
-                    target = {
-                        "question": question,
-                        "type": field_type or field.get("tag"),
-                        "options": [item.get("label", "") for item in field.get("options", [])],
+                    confirmation = _confirmation_text(page)
+                    final_screenshot = _save_screenshot(page, task, "03-submitted")
+                    if not SUCCESS_PATTERNS.search(confirmation):
+                        return _checkpoint(
+                            "submission_uncertain",
+                            "The submit control was clicked, but a confirmation could not be verified. Check the site before retrying.",
+                            screenshot=final_screenshot,
+                            target_url=page.url,
+                        )
+                    return {
+                        "status": "submitted",
+                        "message": "The application was submitted and the confirmation page was verified.",
+                        "result": {"confirmation_url": page.url, "screenshot": final_screenshot},
                     }
-                    (sensitive if risky else missing).append(target)
 
-            updated_fields = _field_snapshot(surface)
-            public_snapshot = _public_snapshot(updated_fields)
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE application_tasks SET form_snapshot_json = ?, updated_at = ? WHERE id = ?",
-                    (json.dumps(public_snapshot), now_iso(), task_id),
-                )
-            screenshot = _save_screenshot(page, task, "02-filled")
-            if not public_snapshot:
-                return _checkpoint(
-                    "unsupported_form",
-                    "No supported application fields were detected. Open this form for manual submission.",
-                    screenshot=screenshot,
-                    target_url=page.url,
-                )
-            if sensitive:
-                return _checkpoint(
-                    "sensitive_question",
-                    "Sensitive application questions need your explicit answer before the task can continue.",
-                    sensitive,
-                    screenshot=screenshot,
-                )
-            if missing:
-                return _checkpoint(
-                    "unknown_field",
-                    "Required fields remain unanswered. Add answers, then continue the task.",
-                    missing,
-                    screenshot=screenshot,
-                )
-
-            submit = _submit_locator(surface, str(task["adapter"]))
-            if submit.count() == 0:
+                continue_control = _continue_locator(surface, str(task["adapter"]))
+                if continue_control is not None and continue_control.count():
+                    _record_task_event(
+                        task_id,
+                        "advancing",
+                        f"Application step {step_number} is complete; advancing to the next step.",
+                    )
+                    _click_and_settle(page, continue_control)
+                    continue
+                if not all_snapshots:
+                    return _checkpoint(
+                        "unsupported_form",
+                        "No supported application fields were detected. Open this form for manual submission.",
+                        screenshot=screenshot,
+                        target_url=page.url,
+                    )
                 return _checkpoint(
                     "submit_control",
-                    "The form was filled, but no supported final submit control was found.",
+                    "The visible form step was filled, but no supported next or final submit control was found.",
                     screenshot=screenshot,
-                )
-            submit_enabled = setting("browser_submit_enabled", "false") == "true"
-            autonomous = task["mode"] == "rules_autonomous" and submit_enabled
-            explicitly_approved = bool(task.get("final_submit_approved"))
-            if not autonomous and not explicitly_approved:
-                return _checkpoint(
-                    "final_review",
-                    "The form is filled and ready. Review the screenshot, then explicitly approve final submission.",
-                    screenshot=screenshot,
-                    target_url=task["target_url"],
-                )
-            limit = int(setting("daily_application_limit", "10") or "10")
-            count = submitted_today_count()
-            if count >= limit:
-                return _checkpoint(
-                    "daily_limit",
-                    f"Final submission stopped because the daily limit was reached ({count}/{limit}).",
-                )
-
-            _record_task_event(task_id, "submitting", "Clicking the final application submit control.")
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE application_tasks SET submit_started_at = ?, updated_at = ? WHERE id = ?",
-                    (now_iso(), now_iso(), task_id),
-                )
-            submit.click(timeout=15_000)
-            try:
-                page.wait_for_load_state("networkidle", timeout=10_000)
-            except PlaywrightTimeoutError:
-                pass
-            confirmation = page.locator("body").inner_text(timeout=10_000)
-            final_screenshot = _save_screenshot(page, task, "03-submitted")
-            if not SUCCESS_PATTERNS.search(confirmation):
-                return _checkpoint(
-                    "submission_uncertain",
-                    "The submit control was clicked, but a confirmation could not be verified. Check the site before retrying.",
-                    screenshot=final_screenshot,
                     target_url=page.url,
+                    step=step_number,
                 )
-            return {
-                "status": "submitted",
-                "message": "The application was submitted and the confirmation page was verified.",
-                "result": {"confirmation_url": page.url, "screenshot": final_screenshot},
-            }
+            return _checkpoint(
+                "step_limit",
+                f"Automation stopped after {MAX_FORM_STEPS} application steps to prevent an unbounded workflow.",
+                target_url=page.url,
+            )
         finally:
             browser.close()
 
@@ -854,8 +1021,19 @@ def resolve_checkpoint(
         raise ValueError("Browser application task does not exist")
     if task["status"] != "checkpoint":
         raise ValueError("Only checkpointed browser tasks can continue")
-    if task["checkpoint_kind"] == "submission_uncertain":
-        raise ValueError("An uncertain submission cannot be retried automatically. Verify it manually first.")
+    non_resumable = {
+        "submission_uncertain",
+        "unsupported_site",
+        "unsupported_form",
+        "submit_control",
+        "step_limit",
+        "captcha",
+        "login",
+    }
+    if task["checkpoint_kind"] in non_resumable:
+        raise ValueError(
+            "This checkpoint cannot be retried automatically. Open the application and verify it manually."
+        )
     if task["checkpoint_kind"] == "final_review" and not approve_submit:
         raise ValueError("Final review requires explicit submit approval")
     merged = dict(_json_value(task["answers_json"], {}))

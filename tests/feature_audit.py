@@ -560,6 +560,23 @@ def main() -> None:
         event = row("SELECT message FROM events WHERE message = ?", ("Plain-English audit event.",))
         record("PASS" if event else "FAIL", "Plain-English activity log", "Worker actions and blockers are recorded for the dashboard.")
 
+        adapter_routes = {
+            "https://jobs.ashbyhq.com/example/apply": "ashby",
+            "https://jobs.smartrecruiters.com/Example/123-role": "smartrecruiters",
+            "https://example.wd5.myworkdayjobs.com/Careers/job/123": "workday",
+        }
+        adapters_ready = all(
+            automation._adapter_name(url) == expected
+            for url, expected in adapter_routes.items()
+        )
+        record(
+            "PASS" if adapters_ready else "FAIL",
+            "Extended ATS adapter coverage",
+            "Ashby, SmartRecruiters, and Workday URLs route to guarded browser adapters."
+            if adapters_ready
+            else "One or more extended ATS URL patterns were not recognized.",
+        )
+
         try:
             set_setting("daily_application_limit", "10")
             set_setting("mode", "review")
