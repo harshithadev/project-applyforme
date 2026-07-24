@@ -87,6 +87,22 @@ def init_db() -> None:
               updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS job_source_states (
+              source_url TEXT PRIMARY KEY,
+              source_kind TEXT NOT NULL,
+              cursor TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'idle',
+              pages_scanned INTEGER NOT NULL DEFAULT 0,
+              jobs_seen INTEGER NOT NULL DEFAULT 0,
+              scan_count INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT NOT NULL DEFAULT '',
+              metadata TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              last_scanned_at TEXT NOT NULL DEFAULT '',
+              last_success_at TEXT NOT NULL DEFAULT ''
+            );
+
             CREATE TABLE IF NOT EXISTS applications (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               job_id INTEGER NOT NULL,
@@ -303,6 +319,10 @@ def init_db() -> None:
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_source_key "
             "ON jobs(source_key) WHERE source_key <> ''"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_job_source_states_status "
+            "ON job_source_states(status, updated_at)"
         )
         application_columns = {
             "resume_compile_status": "TEXT NOT NULL DEFAULT 'pending'",

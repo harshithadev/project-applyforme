@@ -8,7 +8,8 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - SQLite tracker in `data/applyforme.sqlite3`.
 - PDF, DOCX, and text document ingestion from `docs/`.
 - A source-grounded structured candidate profile with contact, skills, education, certifications, and evidence.
-- Manual job entry and enriched career-page scanning with Greenhouse and Lever adapters.
+- Manual job entry and enriched career-page scanning with Greenhouse, Lever, Ashby, SmartRecruiters, and Workday adapters.
+- Persistent per-source cursors, pagination status, scan counts, and errors in the dashboard.
 - Role, company, location, and posting-age filters with canonical URL and ATS-ID deduplication.
 - Tailored LaTeX resume generation with validated PDF output for each job.
 - Dashboard PDF preview, LaTeX download, recompile controls, and compiler diagnostics.
@@ -73,7 +74,9 @@ Files are classified from their names, tracked by content hash, and re-ingested 
 
 ## Job sources
 
-Add company career pages, Greenhouse boards, or Lever sites under **Settings > Career URLs**. Scans fetch complete descriptions, normalize location and posting dates where the source exposes them, and retain matching reasons with each job. Greenhouse and Lever public feeds do not require API credentials for discovery.
+Add company career pages or public Greenhouse, Lever, Ashby, SmartRecruiters, and Workday career-site URLs under **Settings > Career URLs**. Scans fetch complete descriptions, normalize location and posting dates where the source exposes them, and retain matching reasons with each job. These public discovery feeds do not require API credentials.
+
+Ashby, SmartRecruiters, and Workday scans paginate up to **Max jobs per source** per run. The next offset is stored in SQLite and resumed on the next scan; the **Source scans** panel shows progress, errors, and when a full cycle completes.
 
 The posting-age filter is applied when a source supplies a date. Jobs without a source date remain visible and are marked accordingly rather than being silently discarded.
 

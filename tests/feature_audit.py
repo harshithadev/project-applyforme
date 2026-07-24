@@ -174,6 +174,7 @@ def main() -> None:
             automation,
             contact_discovery,
             emailer,
+            job_sources,
             jobs,
             outreach,
             profile,
@@ -216,6 +217,23 @@ def main() -> None:
             record("PASS", "Career-page scanning", "Configured pages are scanned and duplicate job URLs are ignored.")
         else:
             record("FAIL", "Career-page scanning", f"First={first_scan}, second={second_scan}")
+        source_state = row(
+            "SELECT * FROM job_source_states WHERE source_url = ?",
+            (job_sources.canonicalize_url(careers_url),),
+        )
+        source_state_ready = bool(
+            source_state
+            and source_state["status"] == "ready"
+            and source_state["scan_count"] == 2
+            and source_state["last_success_at"]
+        )
+        record(
+            "PASS" if source_state_ready else "FAIL",
+            "Persistent source scan state",
+            "Each career source retains its cursor, scan count, status, and last successful run."
+            if source_state_ready
+            else f"Source state was incomplete: {source_state}",
+        )
         discovered_job = row("SELECT * FROM jobs WHERE source = 'career-detail' LIMIT 1")
         if (
             discovered_job
@@ -569,12 +587,16 @@ def main() -> None:
             automation._adapter_name(url) == expected
             for url, expected in adapter_routes.items()
         )
+        discovery_ready = all(
+            job_sources.source_kind(url) == expected
+            for url, expected in adapter_routes.items()
+        )
         record(
-            "PASS" if adapters_ready else "FAIL",
+            "PASS" if adapters_ready and discovery_ready else "FAIL",
             "Extended ATS adapter coverage",
-            "Ashby, SmartRecruiters, and Workday URLs route to guarded browser adapters."
-            if adapters_ready
-            else "One or more extended ATS URL patterns were not recognized.",
+            "Ashby, SmartRecruiters, and Workday URLs route to native discovery and guarded browser adapters."
+            if adapters_ready and discovery_ready
+            else "One or more extended ATS URL patterns were not recognized for discovery and submission.",
         )
 
         try:

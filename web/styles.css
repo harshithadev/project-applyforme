@@ -333,6 +333,36 @@ main {
   margin-top: 5px;
 }
 
+.source-states {
+  display: grid;
+}
+
+.source-state-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.source-state-row:last-child {
+  border-bottom: 0;
+}
+
+.source-state-row p {
+  margin: 5px 0 0;
+}
+
+.source-state-facts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .event.error {
   border-color: #e2b8b8;
   background: #fff8f8;
@@ -863,6 +893,14 @@ textarea {
 
   .contact-row {
     flex-direction: column;
+  }
+
+  .source-state-row {
+    grid-template-columns: 1fr;
+  }
+
+  .source-state-facts {
+    justify-content: flex-start;
   }
 
   .contact-actions {

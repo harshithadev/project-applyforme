@@ -85,6 +85,7 @@ function render() {
   renderEvents("#recentEvents", data.events.slice(0, 8));
   renderEvents("#logsList", data.events);
   renderJobs(data.jobs);
+  renderSourceStates(data.job_source_states || []);
   renderApplications(data.applications, data.application_tasks || []);
   renderOutreach(
     data.outreach || [],
@@ -196,6 +197,37 @@ function renderJobs(jobs) {
       </div>
     </article>
   `).join("");
+}
+
+function renderSourceStates(sources) {
+  const target = $("#sourceStatesList");
+  $("#sourceStateMeta").textContent = `${sources.length} configured`;
+  if (!sources.length) {
+    target.innerHTML = `<div class="empty">Configured career URLs appear here after their first scan.</div>`;
+    return;
+  }
+  target.innerHTML = sources.map((source) => {
+    const metadata = source.metadata || {};
+    const total = Number(metadata.total || 0);
+    const complete = Boolean(metadata.complete_cycle);
+    return `
+      <div class="source-state-row">
+        <div>
+          <strong>${escapeHtml(source.source_kind)}</strong>
+          <p class="meta mono">${escapeHtml(source.source_url)}</p>
+          ${source.last_error ? `<p class="error-text">${escapeHtml(source.last_error)}</p>` : ""}
+        </div>
+        <div class="source-state-facts">
+          <span class="status">${escapeHtml(source.status)}</span>
+          <span>${Number(source.jobs_seen || 0)} jobs</span>
+          <span>${Number(source.pages_scanned || 0)} page${Number(source.pages_scanned || 0) === 1 ? "" : "s"}</span>
+          ${total ? `<span>${total} total</span>` : ""}
+          <span>${complete ? "Cycle complete" : `Next offset ${escapeHtml(source.cursor || "0")}`}</span>
+          <span>${escapeHtml(source.last_success_at || source.last_scanned_at || "")}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 function renderBrowserTask(task) {

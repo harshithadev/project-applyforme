@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterator
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -227,6 +227,236 @@ def main() -> None:
         ats_jobs = rows("SELECT source, source_key, apply_url FROM jobs WHERE source IN ('greenhouse', 'lever')")
         assert len(ats_jobs) == 2
         assert all(job["source_key"] and job["apply_url"] for job in ats_jobs)
+
+        assert job_sources.source_kind("https://jobs.ashbyhq.com/AshbyExample") == "ashby"
+        assert (
+            job_sources.source_kind("https://jobs.smartrecruiters.com/SmartExample")
+            == "smartrecruiters"
+        )
+        assert (
+            job_sources.source_kind(
+                "https://example.wd5.myworkdayjobs.com/en-US/External"
+            )
+            == "workday"
+        )
+        assert job_sources.ashby_board_name(
+            "https://api.ashbyhq.com/posting-api/job-board/AshbyExample"
+        ) == "AshbyExample"
+        assert job_sources.smartrecruiters_company(
+            "https://api.smartrecruiters.com/v1/companies/SmartExample/postings"
+        ) == "SmartExample"
+        assert job_sources.workday_site(
+            "https://example.wd5.myworkdayjobs.com/en-US/External"
+        ) == ("example", "External", "example.wd5.myworkdayjobs.com")
+        assert job_sources.workday_site(
+            "https://example.wd5.myworkdaysite.com/recruiting/example/External"
+        ) == ("example", "External", "example.wd5.myworkdaysite.com")
+
+        ashby_payload = {
+            "jobs": [
+                {
+                    "id": f"ashby-{index}",
+                    "title": f"Platform Engineer {index}",
+                    "companyName": "Ashby Example",
+                    "location": "United States",
+                    "workplaceType": "Remote",
+                    "descriptionPlain": f"Build Python platform services for team {index}.",
+                    "publishedAt": now,
+                    "jobUrl": (
+                        f"https://jobs.ashbyhq.com/AshbyExample/ashby-{index}"
+                        "?utm_source=fixture"
+                    ),
+                    "applyUrl": (
+                        f"https://jobs.ashbyhq.com/AshbyExample/ashby-{index}/application"
+                        "?utm_campaign=fixture"
+                    ),
+                    "isListed": True,
+                }
+                for index in range(5)
+            ]
+        }
+        smart_items = [
+            {
+                "id": f"smart-{index}",
+                "name": f"Platform Engineer {index}",
+            }
+            for index in range(5)
+        ]
+        smart_details = {
+            item["id"]: {
+                **item,
+                "uuid": f"smart-uuid-{index}",
+                "company": {"name": "Smart Example"},
+                "location": {
+                    "city": "New York",
+                    "region": "NY",
+                    "country": "us",
+                    "remote": True,
+                },
+                "remote": True,
+                "releasedDate": now,
+                "applyUrl": (
+                    "https://jobs.smartrecruiters.com/SmartExample/"
+                    f"{item['id']}-platform-engineer?source=fixture"
+                ),
+                "jobAd": {
+                    "sections": {
+                        "jobDescription": {
+                            "text": f"<p>Build Python APIs for platform team {index}.</p>"
+                        },
+                        "qualifications": {"text": "<p>Production engineering experience.</p>"},
+                    }
+                },
+            }
+            for index, item in enumerate(smart_items)
+        }
+        workday_items = [
+            {
+                "title": f"Platform Engineer {index}",
+                "externalPath": f"/job/Remote/Platform-Engineer-{index}_WD-{index}",
+                "locationsText": "Remote",
+                "timeType": "Full time",
+                "bulletFields": [f"WD-{index}"],
+            }
+            for index in range(5)
+        ]
+        workday_details = {
+            item["externalPath"]: {
+                "jobPostingInfo": {
+                    "id": f"workday-{index}",
+                    "title": item["title"],
+                    "jobDescription": (
+                        f"<p>Build Python infrastructure for platform team {index}.</p>"
+                    ),
+                    "location": "Remote",
+                    "remoteType": "Remote",
+                    "startDate": now,
+                    "timeType": "Full time",
+                    "jobReqId": f"WD-{index}",
+                    "jobPostingSiteId": "External",
+                    "externalUrl": (
+                        "https://example.wd5.myworkdayjobs.com/en-US/External"
+                        f"{item['externalPath']}"
+                    ),
+                },
+                "hiringOrganization": {"name": "Workday Example"},
+            }
+            for index, item in enumerate(workday_items)
+        }
+
+        old_fetch_json = job_sources.fetch_json
+        old_post_json = job_sources.post_json
+
+        def fake_native_fetch_json(url: str) -> object:
+            parsed = urlparse(url)
+            if parsed.path == "/posting-api/job-board/AshbyExample":
+                return ashby_payload
+            if parsed.path == "/v1/companies/SmartExample/postings":
+                query = parse_qs(parsed.query)
+                offset = int(query.get("offset", ["0"])[0])
+                requested = int(query.get("limit", ["100"])[0])
+                page = smart_items[offset : offset + min(2, requested)]
+                return {
+                    "content": page,
+                    "totalFound": len(smart_items),
+                    "offset": offset,
+                    "limit": requested,
+                }
+            smart_prefix = "/v1/companies/SmartExample/postings/"
+            if parsed.path.startswith(smart_prefix):
+                posting_id = parsed.path.removeprefix(smart_prefix)
+                return smart_details[posting_id]
+            workday_prefix = "/wday/cxs/example/External"
+            if parsed.path.startswith(workday_prefix):
+                external_path = parsed.path.removeprefix(workday_prefix)
+                return workday_details[external_path]
+            raise AssertionError(f"Unexpected native GET URL: {url}")
+
+        def fake_native_post_json(url: str, payload: dict[str, object]) -> object:
+            parsed = urlparse(url)
+            assert parsed.path == "/wday/cxs/example/External/jobs", url
+            offset = int(payload["offset"])
+            requested = int(payload["limit"])
+            page = workday_items[offset : offset + min(2, requested)]
+            return {"jobPostings": page, "total": len(workday_items)}
+
+        try:
+            job_sources.fetch_json = fake_native_fetch_json
+            job_sources.post_json = fake_native_post_json
+            set_setting(
+                "career_urls",
+                "\n".join(
+                    (
+                        "https://jobs.ashbyhq.com/AshbyExample",
+                        "https://jobs.smartrecruiters.com/SmartExample",
+                        "https://example.wd5.myworkdayjobs.com/en-US/External",
+                    )
+                ),
+            )
+            set_setting(
+                "target_companies",
+                "Ashby Example, Smart Example, Workday Example",
+            )
+            set_setting("role_keywords", "engineer, Python")
+            set_setting("locations", "remote")
+            set_setting("posted_within_days", "0")
+            set_setting("max_jobs_per_source", "3")
+            native_first = jobs.discover_jobs()
+            first_states = {
+                state["source_kind"]: state for state in jobs.list_source_states()
+                if state["source_kind"] in {"ashby", "smartrecruiters", "workday"}
+            }
+            native_second = jobs.discover_jobs()
+        finally:
+            job_sources.fetch_json = old_fetch_json
+            job_sources.post_json = old_post_json
+
+        assert native_first == {
+            "inserted": 9,
+            "seen": 0,
+            "filtered": 0,
+            "errors": 0,
+            "sources": 3,
+        }, native_first
+        assert native_second == {
+            "inserted": 6,
+            "seen": 0,
+            "filtered": 0,
+            "errors": 0,
+            "sources": 3,
+        }, native_second
+        assert set(first_states) == {"ashby", "smartrecruiters", "workday"}
+        assert all(state["cursor"] == "3" for state in first_states.values()), first_states
+        assert first_states["ashby"]["pages_scanned"] == 1
+        assert first_states["smartrecruiters"]["pages_scanned"] == 2
+        assert first_states["workday"]["pages_scanned"] == 2
+
+        native_states = {
+            state["source_kind"]: state for state in jobs.list_source_states()
+            if state["source_kind"] in {"ashby", "smartrecruiters", "workday"}
+        }
+        assert all(state["cursor"] == "0" for state in native_states.values()), native_states
+        assert all(state["scan_count"] == 2 for state in native_states.values())
+        assert all(state["status"] == "ready" for state in native_states.values())
+        assert all(state["metadata"]["complete_cycle"] for state in native_states.values())
+        assert all(state["metadata"]["total"] == 5 for state in native_states.values())
+
+        native_jobs = rows(
+            """
+            SELECT source, source_key, url, apply_url, description
+            FROM jobs
+            WHERE source IN ('ashby', 'smartrecruiters', 'workday')
+            """
+        )
+        assert len(native_jobs) == 15
+        assert {job["source"] for job in native_jobs} == {
+            "ashby",
+            "smartrecruiters",
+            "workday",
+        }
+        assert all(job["source_key"] and job["apply_url"] for job in native_jobs)
+        assert all("utm_" not in job["url"] and "source=" not in job["url"] for job in native_jobs)
+        assert all("Python" in job["description"] for job in native_jobs)
 
     print("job discovery ok")
 

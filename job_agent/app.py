@@ -32,6 +32,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "settings": all_settings(),
                     "profile": profile.profile_overview(),
                     "jobs": jobs.list_jobs(),
+                    "job_source_states": jobs.list_source_states(),
                     "applications": applications.list_applications(),
                     "application_tasks": automation.list_tasks(),
                     "answer_rules": rows("SELECT * FROM answer_rules ORDER BY updated_at DESC LIMIT 100"),

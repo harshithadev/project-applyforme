@@ -7,8 +7,13 @@ import urllib.error
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from .db import all_settings, connect, log, now_iso, rows
-from .job_sources import JobPosting, canonicalize_url, discover_source
+from .db import all_settings, connect, log, now_iso, row, rows
+from .job_sources import (
+    JobPosting,
+    canonicalize_url,
+    discover_source,
+    source_kind,
+)
 from .latex import keyword_score
 
 
@@ -172,6 +177,94 @@ def _persist_posting(posting: JobPosting, decision: MatchDecision) -> bool:
     return True
 
 
+def _begin_source_scan(url: str) -> dict[str, object]:
+    source_url = canonicalize_url(url)
+    kind = source_kind(source_url)
+    now = now_iso()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO job_source_states(
+              source_url, source_kind, status, scan_count, created_at, updated_at,
+              last_scanned_at
+            )
+            VALUES(?, ?, 'running', 1, ?, ?, ?)
+            ON CONFLICT(source_url) DO UPDATE SET
+              source_kind = excluded.source_kind,
+              status = 'running',
+              scan_count = job_source_states.scan_count + 1,
+              last_error = '',
+              updated_at = excluded.updated_at,
+              last_scanned_at = excluded.last_scanned_at
+            """,
+            (source_url, kind, now, now, now),
+        )
+    return row("SELECT * FROM job_source_states WHERE source_url = ?", (source_url,)) or {
+        "source_url": source_url,
+        "source_kind": kind,
+        "cursor": "",
+    }
+
+
+def _finish_source_scan(
+    source_url: str,
+    *,
+    cursor: str,
+    pages_scanned: int,
+    jobs_seen: int,
+    errors: list[str],
+    metadata: dict[str, object],
+    complete: bool,
+) -> None:
+    now = now_iso()
+    status = "partial" if errors else "ready"
+    state_metadata = {**metadata, "complete_cycle": complete}
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE job_source_states
+            SET cursor = ?, status = ?, pages_scanned = ?, jobs_seen = ?,
+                last_error = ?, metadata = ?, updated_at = ?, last_success_at = ?
+            WHERE source_url = ?
+            """,
+            (
+                cursor,
+                status,
+                pages_scanned,
+                jobs_seen,
+                "\n".join(errors)[-4000:],
+                json.dumps(state_metadata),
+                now,
+                now,
+                source_url,
+            ),
+        )
+
+
+def _fail_source_scan(source_url: str, error: Exception) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE job_source_states
+            SET status = 'error', last_error = ?, updated_at = ?
+            WHERE source_url = ?
+            """,
+            (str(error)[-4000:], now_iso(), source_url),
+        )
+
+
+def list_source_states() -> list[dict[str, object]]:
+    states = rows(
+        "SELECT * FROM job_source_states ORDER BY updated_at DESC, source_url"
+    )
+    for state in states:
+        try:
+            state["metadata"] = json.loads(str(state.get("metadata") or "{}"))
+        except json.JSONDecodeError:
+            state["metadata"] = {}
+    return states
+
+
 def discover_jobs() -> dict[str, int]:
     settings = all_settings()
     urls = split_csv(settings.get("career_urls", ""))
@@ -187,9 +280,18 @@ def discover_jobs() -> dict[str, int]:
         return result
 
     for url in urls:
+        state = _begin_source_scan(url)
+        source_url = str(state["source_url"])
         try:
-            source_result = discover_source(url, companies, keywords, limit)
+            source_result = discover_source(
+                url,
+                companies,
+                keywords,
+                limit,
+                str(state.get("cursor") or ""),
+            )
         except (OSError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            _fail_source_scan(source_url, exc)
             result["errors"] += 1
             log(f"Could not scan {url}.", "error", {"error": str(exc)})
             continue
@@ -205,6 +307,15 @@ def discover_jobs() -> dict[str, int]:
                 result["inserted"] += 1
             else:
                 result["seen"] += 1
+        _finish_source_scan(
+            source_url,
+            cursor=source_result.next_cursor,
+            pages_scanned=source_result.pages_scanned,
+            jobs_seen=len(source_result.postings),
+            errors=source_result.errors,
+            metadata=source_result.metadata,
+            complete=source_result.complete,
+        )
     log(
         "Career scan complete: "
         f"{result['inserted']} new, {result['seen']} refreshed, "
