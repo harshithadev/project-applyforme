@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from . import applications, automation, contact_discovery, jobs, outreach, profile, writing
+from . import applications, automation, contact_discovery, jobs, outreach, profile, service, writing
 from .db import init_db, rows
 
 
@@ -21,6 +21,10 @@ def main() -> None:
     apply = sub.add_parser("apply")
     apply.add_argument("application_id", type=int)
     sub.add_parser("process-application")
+    sub.add_parser("service-install")
+    sub.add_parser("service-status")
+    sub.add_parser("service-restart")
+    sub.add_parser("service-uninstall")
     discover_contacts = sub.add_parser("discover-contacts")
     discover_contacts.add_argument("application_id", type=int)
     discover_contacts.add_argument("--url", default="")
@@ -46,6 +50,14 @@ def main() -> None:
         print(automation.apply_application(args.application_id))
     elif args.command == "process-application":
         print(automation.process_next_task() or {"status": "idle"})
+    elif args.command == "service-install":
+        print(service.install())
+    elif args.command == "service-status":
+        print(service.status())
+    elif args.command == "service-restart":
+        print(service.restart())
+    elif args.command == "service-uninstall":
+        print(service.uninstall())
     elif args.command == "discover-contacts":
         print(contact_discovery.discover_for_application(args.application_id, args.url))
     elif args.command == "state":
