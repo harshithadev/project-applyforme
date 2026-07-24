@@ -103,6 +103,34 @@ def init_db() -> None:
               last_success_at TEXT NOT NULL DEFAULT ''
             );
 
+            CREATE TABLE IF NOT EXISTS pipeline_items (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              job_id INTEGER NOT NULL UNIQUE,
+              application_id INTEGER,
+              status TEXT NOT NULL DEFAULT 'queued',
+              stage TEXT NOT NULL DEFAULT 'discovered',
+              message TEXT NOT NULL DEFAULT '',
+              policy_json TEXT NOT NULL DEFAULT '{}',
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              completed_at TEXT NOT NULL DEFAULT '',
+              FOREIGN KEY(job_id) REFERENCES jobs(id),
+              FOREIGN KEY(application_id) REFERENCES applications(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS pipeline_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              pipeline_item_id INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              stage TEXT NOT NULL,
+              message TEXT NOT NULL,
+              meta TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(pipeline_item_id) REFERENCES pipeline_items(id)
+            );
+
             CREATE TABLE IF NOT EXISTS applications (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               job_id INTEGER NOT NULL,
@@ -324,6 +352,14 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_job_source_states_status "
             "ON job_source_states(status, updated_at)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pipeline_items_status "
+            "ON pipeline_items(status, updated_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pipeline_events_item "
+            "ON pipeline_events(pipeline_item_id, created_at)"
+        )
         application_columns = {
             "resume_compile_status": "TEXT NOT NULL DEFAULT 'pending'",
             "resume_compile_engine": "TEXT NOT NULL DEFAULT ''",
@@ -408,6 +444,11 @@ def init_db() -> None:
             "browser_headless": "true",
             "browser_submit_enabled": "false",
             "browser_allow_sensitive_answers": "false",
+            "pipeline_enabled": "false",
+            "pipeline_min_score": "75",
+            "pipeline_auto_write": "true",
+            "pipeline_auto_approve": "false",
+            "pipeline_auto_apply": "true",
         }
         for key, value in defaults.items():
             conn.execute(
