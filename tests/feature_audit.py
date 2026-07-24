@@ -176,12 +176,13 @@ def main() -> None:
             emailer,
             job_sources,
             jobs,
+            orchestration,
             outreach,
             profile,
             writing,
         )
         from job_agent.config import DOCS_DIR
-        from job_agent.db import init_db, log, row, rows, set_setting
+        from job_agent.db import connect, init_db, log, row, rows, set_setting
         from job_agent.latex import available_latex_engine
 
         init_db()
@@ -507,6 +508,7 @@ def main() -> None:
             )
         api_ok = bool(
             state.get("settings")
+            and state.get("pipeline")
             and created.get("id")
             and api_application.get("id")
             and api_contact.get("id")
@@ -527,7 +529,8 @@ def main() -> None:
             record(
                 "FAIL",
                 "Local dashboard API",
-                f"state={bool(state.get('settings'))}, created_id={created.get('id')}",
+                f"state={bool(state.get('settings'))}, pipeline={bool(state.get('pipeline'))}, "
+                f"created_id={created.get('id')}",
             )
         if artifact_ok:
             record("PASS", "Resume artifact access", "Validated PDFs open inline and LaTeX sources download through scoped endpoints.")
@@ -647,6 +650,51 @@ def main() -> None:
         except Exception as exc:
             record("FAIL", "Playwright browser submission", f"Local ATS integration failed: {exc}")
             record("FAIL", "Background application worker", f"Worker integration failed: {exc}")
+
+        set_setting("pipeline_enabled", "true")
+        set_setting("pipeline_min_score", "100")
+        set_setting("pipeline_auto_write", "false")
+        set_setting("pipeline_auto_apply", "false")
+        set_setting("daily_application_limit", "200")
+        pipeline_job_id = jobs.add_manual_job(
+            {
+                "title": "Pipeline Engineer",
+                "company": "ExampleCo",
+                "url": "https://example.test/jobs/pipeline-audit",
+                "description": "Build Python and TypeScript automation systems.",
+                "location": "Remote",
+            }
+        )
+        with connect() as conn:
+            conn.execute("UPDATE jobs SET score = 100 WHERE id = ?", (pipeline_job_id,))
+        pipeline_enqueued = orchestration.enqueue_eligible_jobs()
+        pipeline_item = row(
+            "SELECT id FROM pipeline_items WHERE job_id = ?",
+            (pipeline_job_id,),
+        )
+        pipeline_package = (
+            orchestration.advance_item(int(pipeline_item["id"])) if pipeline_item else None
+        )
+        pipeline_review = (
+            orchestration.advance_item(int(pipeline_item["id"])) if pipeline_item else None
+        )
+        pipeline_ready = bool(
+            pipeline_enqueued["queued"] == 1
+            and pipeline_package
+            and pipeline_package["application_id"]
+            and pipeline_review
+            and pipeline_review["status"] == "review"
+            and pipeline_review["resume_compile_status"] == "compiled"
+        )
+        record(
+            "PASS" if pipeline_ready else "FAIL",
+            "End-to-end application pipeline",
+            "A score-qualified job advanced through durable drafting and LaTeX compilation to review."
+            if pipeline_ready
+            else f"Queued={pipeline_enqueued}, package={pipeline_package}, review={pipeline_review}",
+        )
+        set_setting("pipeline_enabled", "false")
+
         codex = writing.codex_status(force=True)
         if codex["ready"] and codex["auth"] == "chatgpt":
             record(

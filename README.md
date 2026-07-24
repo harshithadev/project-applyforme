@@ -11,6 +11,8 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Manual job entry and enriched career-page scanning with Greenhouse, Lever, Ashby, SmartRecruiters, and Workday adapters.
 - Persistent per-source cursors, pagination status, scan counts, and errors in the dashboard.
 - Role, company, location, and posting-age filters with canonical URL and ATS-ID deduplication.
+- A durable score-gated pipeline from discovery through tailoring, review, and guarded browser automation.
+- Per-job pipeline history, retries, skips, daily intake limits, and crash recovery.
 - Tailored LaTeX resume generation with validated PDF output for each job.
 - Dashboard PDF preview, LaTeX download, recompile controls, and compiler diagnostics.
 - Evidence-grounded writing versions for resume content, cover letters, statements, and outreach.
@@ -80,6 +82,14 @@ Ashby, SmartRecruiters, and Workday scans paginate up to **Max jobs per source**
 
 The posting-age filter is applied when a source supplies a date. Jobs without a source date remain visible and are marked accordingly rather than being silently discarded.
 
+## Application pipeline
+
+Enable the pipeline under **Settings > Application pipeline**. New jobs at or above the configured score are admitted up to the daily application limit. Each item retains the policy that admitted it, its current stage, attempt count, errors, and transition history.
+
+With automatic Codex tailoring enabled, the pipeline queues grounded resume, cover-letter, statement, and outreach generation through the ChatGPT-authenticated Codex CLI. It then validates the evidence references and compiles the LaTeX resume. Review mode waits for approval before browser automation. Assisted-autonomous mode can fill forms but still stops at final review. Rules-autonomous approval and final browser submission each require their own explicit settings.
+
+Blocked and failed items remain paused until **Retry** is selected. Skipping an item cancels queued writing and browser work when it can be stopped safely; running or uncertain submissions must be resolved first.
+
 ## Codex writer
 
 Sign the local Codex CLI in with ChatGPT before using **Generate with Codex**:
@@ -103,6 +113,12 @@ Run the discovery adapter and filter tests independently with:
 
 ```bash
 npm run test:jobs
+```
+
+Run the durable pipeline and guarded end-to-end transition test with:
+
+```bash
+npm run test:pipeline
 ```
 
 Run the persistent task lifecycle and real local Chromium adapter tests with:

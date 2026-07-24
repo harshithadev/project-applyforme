@@ -211,7 +211,7 @@ main {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
   gap: 14px;
 }
 
@@ -361,6 +361,124 @@ main {
   flex-wrap: wrap;
   color: var(--muted);
   font-size: 12px;
+}
+
+.pipeline-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  border-block: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+
+.pipeline-summary > div {
+  padding: 12px;
+  border-right: 1px solid var(--line);
+}
+
+.pipeline-summary > div:last-child {
+  border-right: 0;
+}
+
+.pipeline-summary span,
+.pipeline-summary strong {
+  display: block;
+}
+
+.pipeline-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pipeline-summary strong {
+  margin-top: 5px;
+  font-size: 20px;
+}
+
+.pipeline-list {
+  display: grid;
+}
+
+.pipeline-row {
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.pipeline-row:last-child {
+  border-bottom: 0;
+}
+
+.pipeline-indicator {
+  width: 5px;
+  min-height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.pipeline-row.blocked .pipeline-indicator,
+.pipeline-row.checkpoint .pipeline-indicator {
+  background: var(--warning);
+}
+
+.pipeline-row.failed .pipeline-indicator {
+  background: var(--danger);
+}
+
+.pipeline-row.submitted .pipeline-indicator {
+  background: #176344;
+}
+
+.pipeline-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.pipeline-heading h4,
+.pipeline-heading p,
+.pipeline-message {
+  margin: 0;
+}
+
+.pipeline-heading p {
+  margin-top: 4px;
+}
+
+.pipeline-message {
+  padding: 10px 0;
+}
+
+.pipeline-facts {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pipeline-history {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pipeline-history summary {
+  cursor: pointer;
+}
+
+.pipeline-event {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.pipeline-event small {
+  white-space: nowrap;
 }
 
 .event.error {
@@ -878,6 +996,7 @@ textarea {
   }
 
   .metric-grid,
+  .pipeline-summary,
   .panel-grid,
   .profile-grid,
   .form-grid,
@@ -885,6 +1004,21 @@ textarea {
   .checkpoint-fields,
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .pipeline-summary > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .pipeline-summary > div:last-child {
+    border-bottom: 0;
+  }
+
+  .pipeline-heading,
+  .pipeline-event {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .delivery-meta {

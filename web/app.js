@@ -70,9 +70,13 @@ function render() {
   $("#modeBadge").textContent = formatMode(data.settings.mode);
   $("#latexBadge").textContent = data.latex_engine || "missing";
   $("#codexBadge").textContent = data.codex?.ready ? "ChatGPT ready" : "Unavailable";
+  $("#pipelineBadge").textContent = data.pipeline?.policy?.enabled
+    ? `${Number(data.pipeline.active || 0)} active`
+    : "Disabled";
   $("#emailBadge").textContent = data.email?.configured ? formatMode(data.email.mode) : "Not configured";
   $("#docCount").textContent = data.profile.documents.length;
   $("#jobCount").textContent = data.jobs.length;
+  $("#pipelineCount").textContent = Number(data.pipeline?.total || 0);
   $("#appCount").textContent = data.applications.length;
   $("#outreachCount").textContent = (data.outreach || []).length;
   $("#eventCount").textContent = data.events.length;
@@ -86,6 +90,7 @@ function render() {
   renderEvents("#logsList", data.events);
   renderJobs(data.jobs);
   renderSourceStates(data.job_source_states || []);
+  renderPipeline(data.pipeline || {});
   renderApplications(data.applications, data.application_tasks || []);
   renderOutreach(
     data.outreach || [],
@@ -95,15 +100,23 @@ function render() {
   );
   renderRules(data.answer_rules || []);
   populateSettings(data.settings);
-  scheduleBackgroundRefresh(data.applications, data.outreach || [], data.application_tasks || []);
+  scheduleBackgroundRefresh(
+    data.applications,
+    data.outreach || [],
+    data.application_tasks || [],
+    data.pipeline || {}
+  );
 }
 
-function scheduleBackgroundRefresh(applications, outreach, applicationTasks) {
+function scheduleBackgroundRefresh(applications, outreach, applicationTasks, pipeline) {
   clearTimeout(state.workerPoll);
   const writingActive = applications.some((app) => ["queued", "running"].includes(app.writing?.task?.status));
   const outreachActive = outreach.some((thread) => ["queued", "sending"].includes(thread.status));
   const browserActive = applicationTasks.some((task) => ["queued", "running"].includes(task.status));
-  const active = writingActive || outreachActive || browserActive;
+  const pipelineActive = (pipeline.items || []).some((item) =>
+    ["queued", "running", "writing", "approved", "applying"].includes(item.status)
+  );
+  const active = writingActive || outreachActive || browserActive || pipelineActive;
   state.workerPoll = active ? setTimeout(() => loadState().catch((error) => toast(error.message)), 3000) : null;
 }
 
@@ -192,7 +205,7 @@ function renderJobs(jobs) {
       </div>
       <p class="meta">Match <span class="score">${Number(job.score || 0)}</span> · ${escapeHtml(job.source)}</p>
       <div class="card-actions">
-        <button data-action="draft" data-job="${job.id}">Draft package</button>
+        <button data-action="draft" data-job="${job.id}" ${job.status === "new" ? "" : "disabled"}>Draft package</button>
         <a class="button-link secondary" href="${escapeHtml(job.url)}" target="_blank" rel="noreferrer">Open posting</a>
       </div>
     </article>
@@ -226,6 +239,69 @@ function renderSourceStates(sources) {
           <span>${escapeHtml(source.last_success_at || source.last_scanned_at || "")}</span>
         </div>
       </div>
+    `;
+  }).join("");
+}
+
+function renderPipeline(pipeline) {
+  const items = pipeline.items || [];
+  const policy = pipeline.policy || {};
+  const counts = pipeline.counts || {};
+  const target = $("#pipelineList");
+  $("#pipelinePolicyMeta").textContent = policy.enabled
+    ? `Enabled · score ${Number(policy.minimum_score || 0)}+ · ${formatMode(policy.mode)}`
+    : "Disabled";
+  $("#pipelineSummary").innerHTML = [
+    ["Active", Number(pipeline.active || 0)],
+    ["Needs attention", Number(pipeline.attention || 0)],
+    ["Review", Number(counts.review || 0)],
+    ["Submitted", Number(counts.submitted || 0)]
+  ].map(([label, value]) => `
+    <div><span>${escapeHtml(label)}</span><strong>${value}</strong></div>
+  `).join("");
+  $("#pipelineRunBtn").disabled = !policy.enabled;
+
+  if (!items.length) {
+    target.innerHTML = `<div class="empty">No jobs have entered the application pipeline.</div>`;
+    return;
+  }
+  target.innerHTML = items.map((item) => {
+    const retryable = ["blocked", "failed"].includes(item.status);
+    const terminal = ["submitted", "skipped", "cancelled"].includes(item.status);
+    const eventRows = (item.events || []).slice(0, 6).map((event) => `
+      <div class="pipeline-event">
+        <span>${escapeHtml(event.message)}</span>
+        <small>${escapeHtml(event.created_at)}</small>
+      </div>
+    `).join("");
+    return `
+      <article class="pipeline-row ${escapeHtml(item.status)}">
+        <div class="pipeline-indicator" aria-hidden="true"></div>
+        <div class="pipeline-main">
+          <div class="pipeline-heading">
+            <div>
+              <h4>${escapeHtml(item.title)}</h4>
+              <p class="meta">${escapeHtml(item.company)} · score ${Number(item.score || 0)} · ${escapeHtml(item.source)}</p>
+            </div>
+            <span class="status">${escapeHtml(item.status)}</span>
+          </div>
+          <p class="pipeline-message">${escapeHtml(item.message)}</p>
+          <div class="pipeline-facts">
+            <span>${escapeHtml(formatMode(item.stage))}</span>
+            <span>Attempts ${Number(item.attempt_count || 0)}</span>
+            <span>${escapeHtml(item.updated_at)}</span>
+          </div>
+          <div class="card-actions">
+            ${item.application_id ? `<button data-action="pipeline-open" data-pipeline="${item.id}" class="secondary">Open application</button>` : ""}
+            ${retryable ? `<button data-action="pipeline-retry" data-pipeline="${item.id}">Retry</button>` : ""}
+            ${!terminal ? `<button data-action="pipeline-skip" data-pipeline="${item.id}" class="secondary">Skip</button>` : ""}
+          </div>
+          <details class="pipeline-history">
+            <summary>Activity (${(item.events || []).length})</summary>
+            ${eventRows}
+          </details>
+        </div>
+      </article>
     `;
   }).join("");
 }
@@ -630,6 +706,7 @@ function setView(view) {
   const titles = {
     overview: ["Overview", "Track documents, jobs, applications, and agent actions."],
     jobs: ["Jobs", "Add postings, scan configured career pages, and draft packages."],
+    pipeline: ["Pipeline", "Track automatic preparation, review, and guarded browser work."],
     applications: ["Applications", "Approve, submit, or queue browser automation."],
     outreach: ["Outreach", "Review contacts, approve messages, and track delivery."],
     settings: ["Settings", "Tune modes, limits, target companies, and source URLs."],
@@ -649,6 +726,21 @@ async function handleAction(action, button) {
       });
       toast("Application package drafted.");
       setView("applications");
+    } else if (action === "pipeline-open") {
+      setView("applications");
+    } else if (action === "pipeline-retry") {
+      const result = await api("/api/pipeline/retry", {
+        method: "POST",
+        body: JSON.stringify({ pipeline_item_id: Number(button.dataset.pipeline) })
+      });
+      toast(result.message || "Pipeline item queued for retry.");
+    } else if (action === "pipeline-skip") {
+      if (!window.confirm("Skip this job in the automatic application pipeline?")) return;
+      const result = await api("/api/pipeline/skip", {
+        method: "POST",
+        body: JSON.stringify({ pipeline_item_id: Number(button.dataset.pipeline) })
+      });
+      toast(result.message || "Pipeline item skipped.");
     } else if (action === "approve") {
       await api("/api/applications/approve", {
         method: "POST",
@@ -788,6 +880,20 @@ function bindEvents() {
     const result = await api("/api/jobs/scan", { method: "POST", body: "{}" });
     toast(`Scan complete: ${result.inserted} new, ${result.seen} refreshed, ${result.filtered} filtered, ${result.errors} errors.`);
     await loadState();
+  });
+
+  $("#pipelineRunBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api("/api/pipeline/run", { method: "POST", body: "{}" });
+      toast(`Pipeline checked ${result.checked}; ${result.queued} queued and ${result.advanced} advanced.`);
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
   });
 
   $("#jobForm").addEventListener("submit", async (event) => {

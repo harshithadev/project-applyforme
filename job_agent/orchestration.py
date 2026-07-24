@@ -559,6 +559,28 @@ def skip_item(item_id: int) -> dict[str, Any]:
         raise ValueError("Pipeline item does not exist")
     if item["status"] in TERMINAL_STATUSES:
         raise ValueError("This pipeline item is already complete")
+    if item["application_id"]:
+        application_id = int(item["application_id"])
+        browser_task = _latest_browser_task(application_id)
+        if browser_task and browser_task["status"] == "running":
+            raise ValueError("The browser task is already running and cannot be skipped safely")
+        if (
+            browser_task
+            and browser_task["status"] == "checkpoint"
+            and browser_task["checkpoint_kind"] == "submission_uncertain"
+        ):
+            raise ValueError("Verify the uncertain submission before changing this pipeline item")
+        if browser_task and browser_task["status"] in {"queued", "checkpoint"}:
+            automation.cancel_task(int(browser_task["id"]))
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE writing_tasks
+                SET status = 'cancelled', message = ?, completed_at = ?
+                WHERE application_id = ? AND status = 'queued'
+                """,
+                ("Writing task cancelled because the pipeline item was skipped.", now_iso(), application_id),
+            )
     _transition(
         item_id,
         "skipped",

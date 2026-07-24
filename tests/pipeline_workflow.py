@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -14,7 +16,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["APPLYFORME_ROOT"] = tmp
 
-        from job_agent import applications, jobs, orchestration, profile
+        from job_agent import applications, automation, jobs, orchestration, profile, writing
         from job_agent.config import DOCS_DIR
         from job_agent.db import connect, init_db, row, rows, set_setting
 
@@ -68,10 +70,7 @@ def main() -> None:
         assert drafted and drafted["stage"] == "package_ready"
         assert drafted["application_id"]
         reviewed = orchestration.advance_item(int(item["id"]))
-        assert reviewed and reviewed["status"] == "review", (
-            reviewed,
-            applications.get_application(int(drafted["application_id"])),
-        )
+        assert reviewed and reviewed["status"] == "review", reviewed
         assert reviewed["resume_compile_status"] == "compiled"
         assert len(rows("SELECT id FROM applications WHERE job_id = ?", (first_job,))) == 1
 
@@ -114,8 +113,116 @@ def main() -> None:
         assert len(rows("SELECT id FROM applications WHERE job_id = ?", (second_job,))) == 1
 
         assert orchestration.enqueue_eligible_jobs()["daily_remaining"] == 0
-        assert row("SELECT COUNT(*) AS count FROM pipeline_events")["count"] >= 10
-        assert orchestration.pipeline_status()["total"] == 2
+
+        set_setting("daily_application_limit", "10")
+        set_setting("pipeline_auto_write", "true")
+        set_setting("pipeline_auto_apply", "true")
+        third_job = jobs.add_manual_job(
+            {
+                "title": "Automation Engineer",
+                "company": "ExampleCo",
+                "url": "https://boards.greenhouse.io/example/jobs/automation-3",
+                "description": "Build Python and TypeScript browser automation.",
+                "location": "Remote",
+            }
+        )
+        with connect() as conn:
+            conn.execute("UPDATE jobs SET score = 98 WHERE id = ?", (third_job,))
+        assert orchestration.enqueue_eligible_jobs()["queued"] == 1
+        third_item = row("SELECT * FROM pipeline_items WHERE job_id = ?", (third_job,))
+        assert third_item
+
+        package = orchestration.advance_item(int(third_item["id"]))
+        assert package and package["stage"] == "package_ready"
+        writing_state = orchestration.advance_item(
+            int(third_item["id"]),
+            queue_writer_fn=lambda application_id: writing.queue_codex_draft(
+                application_id,
+                require_ready=False,
+            ),
+        )
+        assert writing_state and writing_state["status"] == "writing"
+
+        def fake_codex_runner(
+            command: list[str],
+            **kwargs: object,
+        ) -> subprocess.CompletedProcess[str]:
+            task_dir = Path(str(kwargs["cwd"]))
+            request = json.loads((task_dir / "input.json").read_text(encoding="utf-8"))
+            evidence = request["evidence"][0]
+            evidence_id = evidence["id"]
+            evidence_text = evidence["text"]
+            result = {
+                "resume": {
+                    "headline": "Automation Engineer",
+                    "summary": evidence_text,
+                    "bullets": [{"text": evidence_text, "evidence_ids": [evidence_id]}],
+                },
+                "cover_letter": (
+                    "Dear ExampleCo Hiring Team,\n\n"
+                    "I am interested in the Automation Engineer role."
+                ),
+                "statements": [
+                    {
+                        "question": "Why are you interested in this role?",
+                        "answer": "The role aligns with the responsibilities in the posting.",
+                    },
+                    {
+                        "question": "Anything else you would like us to know?",
+                        "answer": "My materials use verified source documents.",
+                    },
+                ],
+                "email": {
+                    "subject": "Interest in Automation Engineer",
+                    "body": "Hi, I am applying for the Automation Engineer role at ExampleCo.",
+                },
+                "claims": [{"text": evidence_text, "evidence_ids": [evidence_id]}],
+            }
+            output_index = command.index("--output-last-message") + 1
+            Path(command[output_index]).write_text(json.dumps(result), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(result), stderr="")
+
+        written = writing.process_next_task(runner=fake_codex_runner)
+        assert written and written["status"] == "completed", written
+        review_ready = orchestration.advance_item(int(third_item["id"]))
+        assert review_ready and review_ready["status"] == "review", review_ready
+
+        application_id = int(review_ready["application_id"])
+        applications.approve_application(application_id)
+        browser_queued = orchestration.advance_item(int(third_item["id"]))
+        assert browser_queued and browser_queued["status"] == "applying"
+        browser_task = row(
+            "SELECT * FROM application_tasks WHERE application_id = ? ORDER BY id DESC LIMIT 1",
+            (application_id,),
+        )
+        assert browser_task and browser_task["status"] == "queued"
+
+        final_review = automation.process_next_task(
+            lambda _task, _app: {
+                "status": "checkpoint",
+                "checkpoint_kind": "final_review",
+                "message": "Ready for final review.",
+                "checkpoint": {},
+            }
+        )
+        assert final_review and final_review["checkpoint_kind"] == "final_review"
+        checkpoint = orchestration.advance_item(int(third_item["id"]))
+        assert checkpoint and checkpoint["status"] == "checkpoint"
+
+        automation.resolve_checkpoint(int(final_review["id"]), approve_submit=True)
+        submitted_task = automation.process_next_task(
+            lambda _task, _app: {
+                "status": "submitted",
+                "message": "Local fixture confirmed submission.",
+                "result": {"confirmation_url": "https://example.test/thanks"},
+            }
+        )
+        assert submitted_task and submitted_task["status"] == "submitted"
+        submitted = orchestration.advance_item(int(third_item["id"]))
+        assert submitted and submitted["status"] == "submitted"
+
+        assert row("SELECT COUNT(*) AS count FROM pipeline_events")["count"] >= 20
+        assert orchestration.pipeline_status()["total"] == 3
 
     print("pipeline workflow ok")
 

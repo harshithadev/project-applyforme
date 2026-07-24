@@ -8,7 +8,17 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import applications, automation, contact_discovery, emailer, jobs, outreach, profile, writing
+from . import (
+    applications,
+    automation,
+    contact_discovery,
+    emailer,
+    jobs,
+    orchestration,
+    outreach,
+    profile,
+    writing,
+)
 from .config import GENERATED_DIR, WEB_DIR
 from .db import all_settings, db_info, init_db, log, rows, set_setting
 from .latex import available_latex_engine
@@ -33,6 +43,10 @@ class Handler(SimpleHTTPRequestHandler):
                     "profile": profile.profile_overview(),
                     "jobs": jobs.list_jobs(),
                     "job_source_states": jobs.list_source_states(),
+                    "pipeline": {
+                        **orchestration.pipeline_status(),
+                        "items": orchestration.list_items(),
+                    },
                     "applications": applications.list_applications(),
                     "application_tasks": automation.list_tasks(),
                     "answer_rules": rows("SELECT * FROM answer_rules ORDER BY updated_at DESC LIMIT 100"),
@@ -71,6 +85,12 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json(jobs.discover_jobs())
             elif path == "/api/jobs":
                 self.json({"id": jobs.add_manual_job(payload)})
+            elif path == "/api/pipeline/run":
+                self.json(orchestration.process_cycle())
+            elif path == "/api/pipeline/retry":
+                self.json(orchestration.retry_item(int(payload["pipeline_item_id"])))
+            elif path == "/api/pipeline/skip":
+                self.json(orchestration.skip_item(int(payload["pipeline_item_id"])))
             elif path == "/api/applications/draft":
                 self.json(applications.draft_application(int(payload["job_id"]), payload.get("mode")))
             elif path == "/api/applications/approve":
@@ -238,6 +258,7 @@ def main() -> None:
     writing.start_writing_worker()
     outreach.start_worker()
     automation.start_worker()
+    orchestration.start_worker()
     WEB_DIR.mkdir(parents=True, exist_ok=True)
     host = "127.0.0.1"
     port = 8787

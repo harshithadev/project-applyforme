@@ -19,6 +19,7 @@
         <nav>
           <button class="nav-item active" data-view="overview">Overview</button>
           <button class="nav-item" data-view="jobs">Jobs</button>
+          <button class="nav-item" data-view="pipeline">Pipeline</button>
           <button class="nav-item" data-view="applications">Applications</button>
           <button class="nav-item" data-view="outreach">Outreach</button>
           <button class="nav-item" data-view="settings">Settings</button>
@@ -31,6 +32,8 @@
           <strong id="latexBadge">Checking</strong>
           <span class="label">Codex writer</span>
           <strong id="codexBadge">Checking</strong>
+          <span class="label">Pipeline</span>
+          <strong id="pipelineBadge">Checking</strong>
           <span class="label">Email delivery</span>
           <strong id="emailBadge">Checking</strong>
         </div>
@@ -53,6 +56,7 @@
           <div class="metric-grid">
             <div class="metric"><span>Documents</span><strong id="docCount">0</strong></div>
             <div class="metric"><span>Jobs</span><strong id="jobCount">0</strong></div>
+            <div class="metric"><span>Pipeline</span><strong id="pipelineCount">0</strong></div>
             <div class="metric"><span>Applications</span><strong id="appCount">0</strong></div>
             <div class="metric"><span>Outreach</span><strong id="outreachCount">0</strong></div>
             <div class="metric"><span>Events</span><strong id="eventCount">0</strong></div>
@@ -111,6 +115,20 @@
               <span id="jobQueueMeta"></span>
             </div>
             <div id="jobsList" class="cards"></div>
+          </section>
+        </section>
+
+        <section id="pipeline" class="view">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Application Pipeline</h3>
+                <span id="pipelinePolicyMeta"></span>
+              </div>
+              <button id="pipelineRunBtn" class="secondary">Run now</button>
+            </div>
+            <div id="pipelineSummary" class="pipeline-summary"></div>
+            <div id="pipelineList" class="pipeline-list"></div>
           </section>
         </section>
 
@@ -201,6 +219,33 @@
                 <select name="email_mode">
                   <option value="approval">Send after approval</option>
                   <option value="autonomous">Autonomous sending</option>
+                </select>
+              </label>
+              <label>Application pipeline
+                <select name="pipeline_enabled">
+                  <option value="false">Disabled</option>
+                  <option value="true">Enabled</option>
+                </select>
+              </label>
+              <label>Minimum pipeline score
+                <input name="pipeline_min_score" type="number" min="0" max="100" />
+              </label>
+              <label>Automatic Codex tailoring
+                <select name="pipeline_auto_write">
+                  <option value="true">Queue automatically</option>
+                  <option value="false">Use grounded template</option>
+                </select>
+              </label>
+              <label>Rules-autonomous approval
+                <select name="pipeline_auto_approve">
+                  <option value="false">Require approval</option>
+                  <option value="true">Approve validated materials</option>
+                </select>
+              </label>
+              <label>Browser queue after approval
+                <select name="pipeline_auto_apply">
+                  <option value="true">Queue automatically</option>
+                  <option value="false">Queue manually</option>
                 </select>
               </label>
               <label>Daily application limit
