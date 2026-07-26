@@ -4,6 +4,7 @@ __pycache__/
 .DS_Store
 .env
 data/*.sqlite3
+data/logs/
 generated/applications/
 generated/writing/
 tmp/

@@ -179,6 +179,7 @@ def main() -> None:
             orchestration,
             outreach,
             profile,
+            service,
             writing,
         )
         from job_agent.config import DOCS_DIR
@@ -186,6 +187,20 @@ def main() -> None:
         from job_agent.latex import available_latex_engine
 
         init_db()
+
+        service_paths = service.service_paths(project_root=REPO_ROOT)
+        service_definition = service.launch_agent_definition(service_paths)
+        service_ready = bool(
+            service_definition.get("RunAtLoad")
+            and service_definition.get("KeepAlive")
+            and service_definition.get("ProgramArguments") == [str(service_paths.runner)]
+            and service_definition.get("WorkingDirectory") == str(REPO_ROOT)
+        )
+        record(
+            "PASS" if service_ready else "FAIL",
+            "macOS login service",
+            "A per-user launch agent starts the local dashboard after login and keeps it running.",
+        )
 
         DOCS_DIR.mkdir(parents=True, exist_ok=True)
         (DOCS_DIR / "resume.md").write_text(
@@ -509,6 +524,7 @@ def main() -> None:
         api_ok = bool(
             state.get("settings")
             and state.get("pipeline")
+            and state.get("service")
             and created.get("id")
             and api_application.get("id")
             and api_contact.get("id")
@@ -530,6 +546,7 @@ def main() -> None:
                 "FAIL",
                 "Local dashboard API",
                 f"state={bool(state.get('settings'))}, pipeline={bool(state.get('pipeline'))}, "
+                f"service={bool(state.get('service'))}, "
                 f"created_id={created.get('id')}",
             )
         if artifact_ok:

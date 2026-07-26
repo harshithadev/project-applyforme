@@ -13,6 +13,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Role, company, location, and posting-age filters with canonical URL and ATS-ID deduplication.
 - A durable score-gated pipeline from discovery through tailoring, review, and guarded browser automation.
 - Per-job pipeline history, retries, skips, daily intake limits, and crash recovery.
+- A per-user macOS login service with restart controls and local stdout/stderr logs.
 - Tailored LaTeX resume generation with validated PDF output for each job.
 - Dashboard PDF preview, LaTeX download, recompile controls, and compiler diagnostics.
 - Evidence-grounded writing versions for resume content, cover letters, statements, and outreach.
@@ -57,6 +58,30 @@ Then open:
 
 ```text
 http://127.0.0.1:8787
+```
+
+## macOS background service
+
+Install and immediately start the per-user login service:
+
+```bash
+npm run service:install
+```
+
+It installs `~/Library/LaunchAgents/com.applyforme.local-agent.plist` without root access. The service starts after login, restarts after crashes, runs from this repository, and continues serving the dashboard at `http://127.0.0.1:8787`. Do not run `npm run dev` at the same time because both processes use port 8787.
+
+Manage it with:
+
+```bash
+npm run service:status
+npm run service:restart
+npm run service:uninstall
+```
+
+Service output is stored in `data/logs/launch-agent.out.log` and `data/logs/launch-agent.err.log`. The ignored `.env` file is loaded by the service runner for SMTP configuration; keep it readable only by your account:
+
+```bash
+chmod 600 .env
 ```
 
 ## Source documents

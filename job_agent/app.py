@@ -17,6 +17,7 @@ from . import (
     orchestration,
     outreach,
     profile,
+    service,
     writing,
 )
 from .config import GENERATED_DIR, WEB_DIR
@@ -26,6 +27,9 @@ from .latex import available_latex_engine
 
 class Handler(SimpleHTTPRequestHandler):
     server_version = "ApplyForMeLocal/0.1"
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
 
     def translate_path(self, path: str) -> str:
         parsed = urlparse(path)
@@ -59,6 +63,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "automation": automation.automation_status(),
                     "codex": writing.codex_status(),
                     "email": outreach.status(),
+                    "service": service.status(),
                 }
             )
             return
@@ -91,6 +96,13 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json(orchestration.retry_item(int(payload["pipeline_item_id"])))
             elif path == "/api/pipeline/skip":
                 self.json(orchestration.skip_item(int(payload["pipeline_item_id"])))
+            elif path == "/api/service/restart":
+                self.json({"ok": True, "message": "Background service restart scheduled."})
+                threading.Thread(
+                    target=restart_background_service,
+                    daemon=True,
+                    name="applyforme-service-restart",
+                ).start()
             elif path == "/api/applications/draft":
                 self.json(applications.draft_application(int(payload["job_id"]), payload.get("mode")))
             elif path == "/api/applications/approve":
@@ -250,6 +262,14 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(data)
+
+
+def restart_background_service() -> None:
+    time.sleep(0.5)
+    try:
+        service.restart()
+    except Exception as exc:
+        log(f"Background service restart failed: {exc}", "error")
 
 
 def main() -> None:

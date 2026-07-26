@@ -73,6 +73,9 @@ function render() {
   $("#pipelineBadge").textContent = data.pipeline?.policy?.enabled
     ? `${Number(data.pipeline.active || 0)} active`
     : "Disabled";
+  $("#serviceBadge").textContent = data.service?.running
+    ? "Running"
+    : data.service?.installed ? "Stopped" : "Not installed";
   $("#emailBadge").textContent = data.email?.configured ? formatMode(data.email.mode) : "Not configured";
   $("#docCount").textContent = data.profile.documents.length;
   $("#jobCount").textContent = data.jobs.length;
@@ -99,6 +102,7 @@ function render() {
     data.contact_discovery_runs || []
   );
   renderRules(data.answer_rules || []);
+  renderService(data.service || {});
   populateSettings(data.settings);
   scheduleBackgroundRefresh(
     data.applications,
@@ -691,6 +695,22 @@ function renderRules(rules) {
   `).join("");
 }
 
+function renderService(service) {
+  const target = $("#serviceDetails");
+  $("#serviceRestartBtn").disabled = !service.loaded;
+  target.innerHTML = `
+    <div>
+      <span class="status">${escapeHtml(service.running ? "running" : service.installed ? "installed" : "not installed")}</span>
+      <strong>${escapeHtml(service.message || "Service status unavailable.")}</strong>
+    </div>
+    <div class="service-facts">
+      <span>${service.pid ? `PID ${Number(service.pid)}` : "No process"}</span>
+      <span>${escapeHtml(service.plist_path || "")}</span>
+      <span>${escapeHtml(service.stderr_log || "")}</span>
+    </div>
+  `;
+}
+
 function populateSettings(settings) {
   const form = $("#settingsForm");
   for (const [key, value] of Object.entries(settings)) {
@@ -892,6 +912,19 @@ function bindEvents() {
     } catch (error) {
       toast(error.message);
     } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("#serviceRestartBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api("/api/service/restart", { method: "POST", body: "{}" });
+      toast(result.message || "Background service restart scheduled.");
+      setTimeout(() => loadState().catch(() => {}), 4000);
+    } catch (error) {
+      toast(error.message);
       button.disabled = false;
     }
   });

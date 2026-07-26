@@ -34,6 +34,8 @@
           <strong id="codexBadge">Checking</strong>
           <span class="label">Pipeline</span>
           <strong id="pipelineBadge">Checking</strong>
+          <span class="label">Login service</span>
+          <strong id="serviceBadge">Checking</strong>
           <span class="label">Email delivery</span>
           <strong id="emailBadge">Checking</strong>
         </div>
@@ -298,6 +300,14 @@
               </label>
               <button type="submit">Save settings</button>
             </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Background Service</h3>
+              <button id="serviceRestartBtn" class="secondary">Restart service</button>
+            </div>
+            <div id="serviceDetails" class="service-details"></div>
           </section>
 
           <section class="panel">

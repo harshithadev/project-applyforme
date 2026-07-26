@@ -481,6 +481,27 @@ main {
   white-space: nowrap;
 }
 
+.service-details {
+  display: grid;
+  gap: 10px;
+}
+
+.service-details > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.service-facts {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .event.error {
   border-color: #e2b8b8;
   background: #fff8f8;
@@ -1016,7 +1037,8 @@ textarea {
   }
 
   .pipeline-heading,
-  .pipeline-event {
+  .pipeline-event,
+  .service-details > div:first-child {
     align-items: stretch;
     flex-direction: column;
   }
