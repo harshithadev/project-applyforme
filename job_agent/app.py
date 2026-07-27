@@ -15,6 +15,7 @@ from . import (
     applications,
     automation,
     browser_diagnostics,
+    browser_recovery,
     browser_sessions,
     contact_discovery,
     documents,
@@ -69,6 +70,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "latex_engine": available_latex_engine(),
                     "automation": automation.automation_status(),
                     "browser_diagnostics": browser_diagnostics.dashboard_state(),
+                    "browser_recovery": browser_recovery.dashboard_state(),
                     "browser_sessions": browser_sessions.list_sessions(),
                     "codex": writing.codex_status(),
                     "email": outreach.status(),
@@ -182,6 +184,20 @@ class Handler(SimpleHTTPRequestHandler):
                 )
             elif path == "/api/applications/task/cancel":
                 self.json(automation.cancel_task(int(payload["task_id"])))
+            elif path == "/api/applications/task/retry":
+                self.json(
+                    automation.retry_task(
+                        int(payload["task_id"]),
+                        bool(payload.get("reset_circuit", False)),
+                    )
+                )
+            elif path == "/api/browser-recovery/circuit/reset":
+                self.json(
+                    browser_recovery.reset_circuit(
+                        str(payload["adapter"]),
+                        str(payload["hostname"]),
+                    )
+                )
             elif path == "/api/browser-sessions/login/start":
                 self.json(
                     browser_sessions.start_login_handoff(int(payload["task_id"]))

@@ -331,6 +331,14 @@
 
           <section class="panel">
             <div class="panel-head">
+              <h3>Browser Recovery</h3>
+              <span id="browserRecoveryMeta">0 waiting</span>
+            </div>
+            <div id="browserRecoveryList" class="browser-recovery-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
               <h3>Applications</h3>
               <span>Review, approve, submit, or queue browser automation.</span>
             </div>
@@ -488,6 +496,27 @@
               </label>
               <label>Sign-in window timeout
                 <input name="browser_login_timeout_minutes" type="number" min="1" max="60" />
+              </label>
+              <label>Automatic browser retries
+                <select name="browser_retry_enabled">
+                  <option value="true">Enabled for recoverable failures</option>
+                  <option value="false">Manual retries only</option>
+                </select>
+              </label>
+              <label>Maximum browser attempts
+                <input name="browser_retry_max_attempts" type="number" min="1" max="10" />
+              </label>
+              <label>Initial retry delay (seconds)
+                <input name="browser_retry_base_delay_seconds" type="number" min="0" max="3600" />
+              </label>
+              <label>Maximum retry delay (seconds)
+                <input name="browser_retry_max_delay_seconds" type="number" min="0" max="86400" />
+              </label>
+              <label>Circuit failure threshold
+                <input name="browser_circuit_failure_threshold" type="number" min="1" max="20" />
+              </label>
+              <label>Circuit cooldown minutes
+                <input name="browser_circuit_cooldown_minutes" type="number" min="1" max="1440" />
               </label>
               <label>Daily email limit
                 <input name="daily_email_limit" type="number" min="1" max="200" />

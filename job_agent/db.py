@@ -230,6 +230,10 @@ def init_db() -> None:
               screenshots_json TEXT NOT NULL DEFAULT '[]',
               artifact_dir TEXT NOT NULL DEFAULT '',
               attempt_count INTEGER NOT NULL DEFAULT 0,
+              next_attempt_at TEXT NOT NULL DEFAULT '',
+              retry_category TEXT NOT NULL DEFAULT '',
+              retry_reason TEXT NOT NULL DEFAULT '',
+              retry_exhausted INTEGER NOT NULL DEFAULT 0,
               final_submit_approved INTEGER NOT NULL DEFAULT 0,
               submit_started_at TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL,
@@ -280,6 +284,19 @@ def init_db() -> None:
               last_message TEXT NOT NULL DEFAULT '',
               category_counts_json TEXT NOT NULL DEFAULT '{}',
               last_attempt_at TEXT NOT NULL DEFAULT '',
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY(adapter, hostname)
+            );
+
+            CREATE TABLE IF NOT EXISTS adapter_circuit_breakers (
+              adapter TEXT NOT NULL,
+              hostname TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'closed',
+              consecutive_failures INTEGER NOT NULL DEFAULT 0,
+              opened_at TEXT NOT NULL DEFAULT '',
+              retry_after TEXT NOT NULL DEFAULT '',
+              last_category TEXT NOT NULL DEFAULT '',
+              last_message TEXT NOT NULL DEFAULT '',
               updated_at TEXT NOT NULL,
               PRIMARY KEY(adapter, hostname)
             );
@@ -542,9 +559,24 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE application_tasks ADD COLUMN browser_session_id INTEGER"
             )
+        recovery_columns = {
+            "next_attempt_at": "TEXT NOT NULL DEFAULT ''",
+            "retry_category": "TEXT NOT NULL DEFAULT ''",
+            "retry_reason": "TEXT NOT NULL DEFAULT ''",
+            "retry_exhausted": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for name, definition in recovery_columns.items():
+            if name not in application_task_columns:
+                conn.execute(
+                    f"ALTER TABLE application_tasks ADD COLUMN {name} {definition}"
+                )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_application_tasks_session "
             "ON application_tasks(browser_session_id, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_application_tasks_retry "
+            "ON application_tasks(status, next_attempt_at, created_at)"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_browser_sessions_status "
@@ -565,6 +597,10 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_adapter_health_updated "
             "ON adapter_health(updated_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_adapter_circuits_status "
+            "ON adapter_circuit_breakers(status, retry_after)"
         )
         contact_columns = {
             "verification_status": "TEXT NOT NULL DEFAULT 'unverified'",
@@ -632,6 +668,12 @@ def init_db() -> None:
             "browser_submit_enabled": "false",
             "browser_allow_sensitive_answers": "false",
             "browser_login_timeout_minutes": "15",
+            "browser_retry_enabled": "true",
+            "browser_retry_max_attempts": "3",
+            "browser_retry_base_delay_seconds": "60",
+            "browser_retry_max_delay_seconds": "900",
+            "browser_circuit_failure_threshold": "3",
+            "browser_circuit_cooldown_minutes": "30",
             "pipeline_enabled": "false",
             "pipeline_min_score": "75",
             "pipeline_auto_write": "true",

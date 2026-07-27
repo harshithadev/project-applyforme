@@ -223,6 +223,7 @@ def main() -> None:
             applications,
             automation,
             browser_diagnostics,
+            browser_recovery,
             browser_sessions,
             contact_discovery,
             emailer,
@@ -235,7 +236,7 @@ def main() -> None:
             writing,
         )
         from job_agent.config import DOCS_DIR
-        from job_agent.db import connect, init_db, log, row, rows, set_setting
+        from job_agent.db import connect, init_db, log, now_iso, row, rows, set_setting
         from job_agent.latex import available_latex_engine
 
         init_db()
@@ -624,6 +625,7 @@ def main() -> None:
             and state.get("readiness")
             and "browser_sessions" in state
             and "browser_diagnostics" in state
+            and "browser_recovery" in state
             and created.get("id")
             and api_application.get("id")
             and api_contact.get("id")
@@ -777,6 +779,75 @@ def main() -> None:
             "Ashby, SmartRecruiters, and Workday URLs route to native discovery and guarded browser adapters."
             if adapters_ready and discovery_ready
             else "One or more extended ATS URL patterns were not recognized for discovery and submission.",
+        )
+
+        set_setting("browser_retry_enabled", "true")
+        set_setting("browser_retry_max_attempts", "3")
+        set_setting("browser_retry_base_delay_seconds", "0")
+        set_setting("browser_retry_max_delay_seconds", "0")
+        set_setting("browser_circuit_failure_threshold", "2")
+        set_setting("browser_circuit_cooldown_minutes", "30")
+        recovery_task = {
+            "adapter": "greenhouse",
+            "target_url": "https://recovery-audit.example.test/jobs/1",
+            "attempt_count": 1,
+            "submit_started_at": "",
+        }
+        browser_recovery.record_outcome(
+            recovery_task,
+            status="failed",
+            message="Navigation timed out before form submission.",
+        )
+        retry_allowed = browser_recovery.retry_decision(
+            recovery_task,
+            message="Navigation timed out before form submission.",
+        )
+        browser_recovery.record_outcome(
+            recovery_task,
+            status="failed",
+            message="Navigation timed out before form submission.",
+        )
+        circuit = browser_recovery.get_circuit(
+            "greenhouse",
+            "recovery-audit.example.test",
+        )
+        retry_blocked = browser_recovery.retry_decision(
+            {**recovery_task, "attempt_count": 2},
+            message="Navigation timed out before form submission.",
+        )
+        uncertain_blocked = browser_recovery.retry_decision(
+            {
+                **recovery_task,
+                "submit_started_at": now_iso(),
+            },
+            message="Connection closed after submit started.",
+            checkpoint_kind="submission_uncertain",
+        )
+        browser_recovery.reset_circuit(
+            "greenhouse",
+            "recovery-audit.example.test",
+        )
+        recovery_ready = bool(
+            retry_allowed["should_retry"]
+            and circuit["effective_status"] == "open"
+            and not retry_blocked["should_retry"]
+            and retry_blocked["reason"] == "circuit_open"
+            and not uncertain_blocked["should_retry"]
+            and uncertain_blocked["reason"] == "submission_uncertain"
+            and browser_recovery.get_circuit(
+                "greenhouse",
+                "recovery-audit.example.test",
+            )["effective_status"] == "closed"
+        )
+        record(
+            "PASS" if recovery_ready else "FAIL",
+            "Policy-controlled browser recovery",
+            "Recoverable pre-submit failures back off, repeated host failures open a circuit, explicit reset closes it, and uncertain submissions never retry."
+            if recovery_ready
+            else (
+                f"allowed={retry_allowed}, circuit={circuit}, "
+                f"blocked={retry_blocked}, uncertain={uncertain_blocked}"
+            ),
         )
 
         try:

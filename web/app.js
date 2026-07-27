@@ -124,7 +124,11 @@ function render() {
     data.browser_sessions || [],
     data.automation?.sessions || {}
   );
-  renderAdapterHealth(data.browser_diagnostics || {});
+  renderAdapterHealth(
+    data.browser_diagnostics || {},
+    data.browser_recovery || {}
+  );
+  renderBrowserRecovery(data.browser_recovery || {});
   renderOutreach(
     data.outreach || [],
     data.contacts || [],
@@ -147,7 +151,7 @@ function scheduleBackgroundRefresh(applications, outreach, applicationTasks, pip
   clearTimeout(state.workerPoll);
   const writingActive = applications.some((app) => ["queued", "running"].includes(app.writing?.task?.status));
   const outreachActive = outreach.some((thread) => ["queued", "sending"].includes(thread.status));
-  const browserActive = applicationTasks.some((task) => ["queued", "running"].includes(task.status));
+  const browserActive = applicationTasks.some((task) => ["queued", "running", "retry_wait"].includes(task.status));
   const pipelineActive = (pipeline.items || []).some((item) =>
     ["queued", "running", "writing", "approved", "applying"].includes(item.status)
   );
@@ -613,6 +617,8 @@ function renderBrowserTask(task) {
   const manualTakeover = takeoverKinds.includes(task.checkpoint_kind);
   const latestScreenshot = (task.screenshots || []).at(-1);
   const latestDiagnostic = (task.diagnostics || [])[0] || {};
+  const recovery = task.recovery || {};
+  const circuit = recovery.circuit || {};
   const screenshotUrl = latestScreenshot
     ? `/api/applications/task-artifact?task_id=${encodeURIComponent(task.id)}&name=${encodeURIComponent(latestScreenshot)}`
     : "";
@@ -653,6 +659,14 @@ function renderBrowserTask(task) {
         <span class="status">${escapeHtml(task.status)}</span>
       </div>
       <p>${escapeHtml(task.message)}</p>
+      ${task.status === "retry_wait" ? `
+        <div class="recovery-status">
+          <strong>${escapeHtml(formatMode(recovery.category || recovery.reason || "retry waiting"))}</strong>
+          <span>${recovery.next_attempt_at
+            ? `Next attempt ${escapeHtml(recovery.next_attempt_at)}`
+            : "Waiting for recovery approval"}</span>
+        </div>
+      ` : ""}
       ${session.id ? `
         <div class="browser-session-inline">
           <span>${escapeHtml(session.hostname || "ATS session")}</span>
@@ -715,7 +729,14 @@ function renderBrowserTask(task) {
           && task.checkpoint_kind !== "login" && !manualTakeover
           ? `<a class="button-link secondary" href="${escapeHtml(checkpoint.target_url)}" target="_blank" rel="noreferrer">Open application</a>`
           : ""}
-        ${["queued", "checkpoint"].includes(task.status) && !session.active
+        ${["failed", "retry_wait"].includes(task.status)
+          ? `<button
+              data-action="task-retry"
+              data-task="${task.id}"
+              data-reset-circuit="${["open", "half_open"].includes(circuit.effective_status) ? "true" : "false"}"
+            >${["open", "half_open"].includes(circuit.effective_status) ? "Reset circuit and retry" : "Retry now"}</button>`
+          : ""}
+        ${["queued", "retry_wait", "checkpoint"].includes(task.status) && !session.active
           ? `<button data-action="task-cancel" data-task="${task.id}" class="secondary">Cancel task</button>`
           : ""}
       </div>
@@ -758,17 +779,25 @@ function renderBrowserSessions(sessions, summary) {
     : `<div class="empty">No ATS browser sessions have been created.</div>`;
 }
 
-function renderAdapterHealth(diagnostics) {
+function renderAdapterHealth(diagnostics, recovery) {
   const summary = diagnostics.summary || {};
   const health = diagnostics.adapter_health || [];
+  const circuits = new Map(
+    (recovery.circuits || []).map((item) => [
+      `${item.adapter}::${item.hostname}`,
+      item
+    ])
+  );
   $("#adapterHealthMeta").textContent = `${Number(summary.bundles || 0)} diagnostic bundles · ${Number(summary.critical || 0)} critical`;
   $("#adapterHealthList").innerHTML = health.length
-    ? health.map((item) => `
+    ? health.map((item) => {
+        const circuit = circuits.get(`${item.adapter}::${item.hostname}`) || {};
+        return `
         <div class="adapter-health-row">
           <div>
             <div class="browser-session-heading">
               <strong>${escapeHtml(formatMode(item.adapter || "unsupported"))}</strong>
-              <span class="status">${escapeHtml(formatMode(item.status || "attention"))}</span>
+              <span class="status">${escapeHtml(formatMode(circuit.effective_status || item.status || "attention"))}</span>
             </div>
             <p>${escapeHtml(item.hostname || "Unknown host")}</p>
             <span>${escapeHtml(item.last_message || "No recent outcome message.")}</span>
@@ -779,8 +808,55 @@ function renderAdapterHealth(diagnostics) {
             <small>Last: ${escapeHtml(formatMode(item.last_category || "none"))}</small>
           </div>
         </div>
-      `).join("")
+      `;
+      }).join("")
     : `<div class="empty">Adapter health will appear after the first browser application attempt.</div>`;
+}
+
+function renderBrowserRecovery(recovery) {
+  const summary = recovery.summary || {};
+  const tasks = recovery.tasks || [];
+  const circuits = (recovery.circuits || []).filter((item) =>
+    ["open", "half_open", "probe_ready"].includes(item.effective_status)
+  );
+  $("#browserRecoveryMeta").textContent = `${Number(summary.waiting || 0)} waiting · ${Number(summary.open_circuits || 0)} open circuits`;
+  const circuitRows = circuits.map((circuit) => `
+    <div class="browser-recovery-row">
+      <div>
+        <div class="browser-session-heading">
+          <strong>${escapeHtml(formatMode(circuit.adapter || "ATS"))}</strong>
+          <span class="status">${escapeHtml(formatMode(circuit.effective_status))}</span>
+        </div>
+        <p>${escapeHtml(circuit.hostname || "Unknown host")}</p>
+        <span>${Number(circuit.consecutive_failures || 0)} consecutive failures${circuit.retry_after ? ` · cooldown until ${escapeHtml(circuit.retry_after)}` : ""}</span>
+      </div>
+      <button
+        class="secondary"
+        data-action="circuit-reset"
+        data-adapter="${escapeHtml(circuit.adapter)}"
+        data-hostname="${escapeHtml(circuit.hostname)}"
+      >Reset circuit</button>
+    </div>
+  `);
+  const taskRows = tasks.map((task) => `
+    <div class="browser-recovery-row">
+      <div>
+        <div class="browser-session-heading">
+          <strong>${escapeHtml(task.company)} · ${escapeHtml(task.title)}</strong>
+          <span class="status">${escapeHtml(formatMode(task.status))}</span>
+        </div>
+        <p>Task #${Number(task.id)} · ${escapeHtml(formatMode(task.retry_category || task.retry_reason || "recovery"))}</p>
+        <span>${escapeHtml(task.message)}${task.next_attempt_at ? ` · ${escapeHtml(task.next_attempt_at)}` : ""}</span>
+      </div>
+      <button
+        data-action="task-retry"
+        data-task="${Number(task.id)}"
+        data-reset-circuit="${["open", "half_open"].includes(task.circuit?.effective_status) ? "true" : "false"}"
+      >${["open", "half_open"].includes(task.circuit?.effective_status) ? "Reset and retry" : "Retry now"}</button>
+    </div>
+  `);
+  $("#browserRecoveryList").innerHTML = [...circuitRows, ...taskRows].join("")
+    || `<div class="empty">No browser retries or open ATS circuits need attention.</div>`;
 }
 
 function renderApplications(apps, tasks) {
@@ -1341,6 +1417,27 @@ async function handleAction(action, button) {
         body: JSON.stringify({ task_id: Number(button.dataset.task) })
       });
       toast("Browser application task cancelled.");
+    } else if (action === "task-retry") {
+      const resetCircuit = button.dataset.resetCircuit === "true";
+      if (resetCircuit && !window.confirm("Reset this ATS circuit and retry the pre-submit browser task now?")) return;
+      const result = await api("/api/applications/task/retry", {
+        method: "POST",
+        body: JSON.stringify({
+          task_id: Number(button.dataset.task),
+          reset_circuit: resetCircuit
+        })
+      });
+      toast(result.message || "Browser task re-queued.");
+    } else if (action === "circuit-reset") {
+      if (!window.confirm("Reset this ATS circuit and release its waiting browser tasks?")) return;
+      const result = await api("/api/browser-recovery/circuit/reset", {
+        method: "POST",
+        body: JSON.stringify({
+          adapter: button.dataset.adapter,
+          hostname: button.dataset.hostname
+        })
+      });
+      toast(result.message || "ATS circuit reset.");
     } else if (action === "compile") {
       const result = await api("/api/applications/compile", {
         method: "POST",

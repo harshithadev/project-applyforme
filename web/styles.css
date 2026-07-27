@@ -834,8 +834,13 @@ main {
   display: grid;
 }
 
+.browser-recovery-list {
+  display: grid;
+}
+
 .browser-session-row,
-.adapter-health-row {
+.adapter-health-row,
+.browser-recovery-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -845,12 +850,14 @@ main {
 }
 
 .browser-session-row:first-child,
-.adapter-health-row:first-child {
+.adapter-health-row:first-child,
+.browser-recovery-row:first-child {
   border-top: 0;
 }
 
 .browser-session-row p,
-.adapter-health-row p {
+.adapter-health-row p,
+.browser-recovery-row p {
   margin: 4px 0;
   font-size: 13px;
 }
@@ -858,6 +865,7 @@ main {
 .browser-session-row > div > span,
 .browser-session-actions > span,
 .adapter-health-row > div > span,
+.browser-recovery-row > div > span,
 .adapter-health-metrics span,
 .adapter-health-metrics small {
   color: var(--muted);
@@ -888,6 +896,19 @@ main {
 
 .adapter-health-metrics strong {
   font-size: 18px;
+}
+
+.recovery-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid #ead2a2;
+  border-radius: 6px;
+  background: #fffaf0;
+  font-size: 12px;
 }
 
 .browser-session-inline {
@@ -1474,6 +1495,7 @@ textarea {
   .connection-row,
   .browser-session-row,
   .adapter-health-row,
+  .browser-recovery-row,
   .service-details > div:first-child {
     align-items: stretch;
     flex-direction: column;
@@ -1500,6 +1522,11 @@ textarea {
   .adapter-health-metrics {
     justify-items: start;
     text-align: left;
+  }
+
+  .recovery-status {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .contact-row {

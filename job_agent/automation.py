@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import browser_diagnostics, browser_sessions
+from . import browser_diagnostics, browser_recovery, browser_sessions
 from .config import GENERATED_DIR
 from .db import connect, log, now_iso, row, rows, setting
 from .latex import application_dir
@@ -81,6 +81,7 @@ def _task_dict(task: dict[str, Any]) -> dict[str, Any]:
         browser_sessions.get_session(session_id) if session_id else None
     )
     task["diagnostics"] = browser_diagnostics.list_for_task(int(task["id"]))
+    task["recovery"] = browser_recovery.task_recovery_state(task)
     return task
 
 
@@ -101,7 +102,7 @@ def list_tasks() -> list[dict[str, Any]]:
 def automation_status() -> dict[str, object]:
     pending = row(
         "SELECT COUNT(*) AS count FROM application_tasks "
-        "WHERE status IN ('queued', 'running', 'checkpoint')"
+        "WHERE status IN ('queued', 'running', 'retry_wait', 'checkpoint')"
     )
     checkpoints = row(
         "SELECT COUNT(*) AS count FROM application_tasks WHERE status = 'checkpoint'"
@@ -216,7 +217,8 @@ def apply_application(application_id: int) -> dict[str, Any]:
     existing = row(
         """
         SELECT * FROM application_tasks
-        WHERE application_id = ? AND status IN ('queued', 'running', 'checkpoint')
+        WHERE application_id = ?
+          AND status IN ('queued', 'running', 'retry_wait', 'checkpoint')
         ORDER BY id DESC LIMIT 1
         """,
         (application_id,),
@@ -275,26 +277,80 @@ def apply_application(application_id: int) -> dict[str, Any]:
 
 
 def _claim_next_task() -> dict[str, Any] | None:
+    blocked: list[tuple[int, str, str, str]] = []
+    claimed_id = 0
+    current = now_iso()
     with connect() as conn:
-        found = conn.execute(
-            "SELECT * FROM application_tasks WHERE status = 'queued' ORDER BY created_at, id LIMIT 1"
-        ).fetchone()
-        if not found:
-            return None
-        cursor = conn.execute(
+        candidates = conn.execute(
             """
-            UPDATE application_tasks
-            SET status = 'running', current_step = 'starting', message = ?,
-                attempt_count = attempt_count + 1,
-                started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END,
-                updated_at = ?
-            WHERE id = ? AND status = 'queued'
+            SELECT * FROM application_tasks
+            WHERE status = 'queued'
+               OR (
+                 status = 'retry_wait'
+                 AND (next_attempt_at = '' OR next_attempt_at <= ?)
+               )
+            ORDER BY created_at, id
+            LIMIT 25
             """,
-            ("Starting the browser application.", now_iso(), now_iso(), int(found["id"])),
+            (current,),
+        ).fetchall()
+        for found in candidates:
+            candidate = dict(found)
+            gate = browser_recovery.attempt_gate(candidate)
+            if not gate["allowed"]:
+                next_attempt_at = str(gate.get("next_attempt_at") or "")
+                reason = str(gate.get("reason") or "circuit_open")
+                message = str(gate.get("message") or "ATS recovery circuit is open.")
+                conn.execute(
+                    """
+                    UPDATE application_tasks
+                    SET status = 'retry_wait', current_step = 'retry_wait',
+                        message = ?, next_attempt_at = ?, retry_reason = ?,
+                        updated_at = ?
+                    WHERE id = ? AND status IN ('queued', 'retry_wait')
+                    """,
+                    (
+                        message,
+                        next_attempt_at,
+                        reason,
+                        current,
+                        int(found["id"]),
+                    ),
+                )
+                blocked.append((int(found["id"]), message, reason, next_attempt_at))
+                continue
+            cursor = conn.execute(
+                """
+                UPDATE application_tasks
+                SET status = 'running', current_step = 'starting', message = ?,
+                    attempt_count = attempt_count + 1, next_attempt_at = '',
+                    started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END,
+                    updated_at = ?
+                WHERE id = ? AND status IN ('queued', 'retry_wait')
+                """,
+                (
+                    "Starting the browser application.",
+                    current,
+                    current,
+                    int(found["id"]),
+                ),
+            )
+            if cursor.rowcount:
+                claimed_id = int(found["id"])
+                break
+    for task_id, message, reason, next_attempt_at in blocked:
+        _record_task_event(
+            task_id,
+            "retry_wait",
+            message,
+            "warning",
+            {"reason": reason, "next_attempt_at": next_attempt_at},
         )
-        if not cursor.rowcount:
-            return None
-    task = row("SELECT * FROM application_tasks WHERE id = ?", (int(found["id"]),))
+    if not claimed_id:
+        return None
+    task = row("SELECT * FROM application_tasks WHERE id = ?", (claimed_id,))
+    if task:
+        browser_recovery.mark_attempt_started(task)
     return task
 
 
@@ -683,6 +739,31 @@ def _record_diagnostic_safely(
             "warning",
             {"application_task_id": int(task["id"])},
         )
+
+
+def _record_recovery_safely(
+    task: dict[str, Any],
+    *,
+    status: str,
+    checkpoint_kind: str,
+    message: str,
+    manual: bool = False,
+) -> dict[str, Any]:
+    try:
+        return browser_recovery.record_outcome(
+            task,
+            status=status,
+            checkpoint_kind=checkpoint_kind,
+            message=message,
+            manual=manual,
+        )
+    except Exception as exc:
+        log(
+            f"Browser recovery state could not be updated: {exc}",
+            "warning",
+            {"application_task_id": int(task["id"])},
+        )
+        return {}
 
 
 def _fill_application_step(
@@ -1087,7 +1168,9 @@ def process_next_task(
                     UPDATE application_tasks
                     SET status = 'submitted', current_step = 'submitted', message = ?,
                         result_json = ?, checkpoint_kind = '', checkpoint_json = '{}',
-                        resume_url = '', completed_at = ?, updated_at = ?
+                        resume_url = '', next_attempt_at = '', retry_category = '',
+                        retry_reason = '', retry_exhausted = 0,
+                        completed_at = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -1106,7 +1189,9 @@ def process_next_task(
                     """
                     UPDATE application_tasks
                     SET status = 'checkpoint', current_step = 'checkpoint', message = ?,
-                        checkpoint_kind = ?, checkpoint_json = ?, updated_at = ?
+                        checkpoint_kind = ?, checkpoint_json = ?, next_attempt_at = '',
+                        retry_category = '', retry_reason = '', retry_exhausted = 0,
+                        updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -1120,9 +1205,15 @@ def process_next_task(
             _record_task_event(task_id, "checkpoint", message, "warning", {"kind": kind})
         else:
             raise RuntimeError(message)
+        _record_recovery_safely(
+            task,
+            status=status,
+            checkpoint_kind=diagnostic_kind,
+            message=message,
+        )
     except Exception as exc:
         current = row(
-            "SELECT submit_started_at FROM application_tasks WHERE id = ?",
+            "SELECT submit_started_at, attempt_count FROM application_tasks WHERE id = ?",
             (task_id,),
         )
         submit_started = bool(current and current["submit_started_at"])
@@ -1133,6 +1224,7 @@ def process_next_task(
             if submit_started
             else f"Browser application task failed: {exc}"
         )
+        recovery_message = str(exc)
         diagnostic_status = status
         diagnostic_kind = kind
         diagnostic_message = message
@@ -1141,32 +1233,104 @@ def process_next_task(
             if isinstance(getattr(exc, "browser_diagnostic", None), dict)
             else None
         )
+        decision_task = {
+            **task,
+            "submit_started_at": str(current["submit_started_at"] or "") if current else "",
+            "attempt_count": (
+                int(current["attempt_count"] or 0)
+                if current
+                else int(task.get("attempt_count") or 0)
+            ),
+        }
+        _record_recovery_safely(
+            decision_task,
+            status=status,
+            checkpoint_kind=kind,
+            message=recovery_message,
+        )
+        decision = (
+            browser_recovery.retry_decision(
+                decision_task,
+                message=recovery_message,
+                checkpoint_kind=kind,
+            )
+            if not submit_started
+            else {
+                "should_retry": False,
+                "category": "submission_uncertain",
+                "next_attempt_at": "",
+                "reason": "submission_uncertain",
+                "exhausted": False,
+            }
+        )
+        should_retry = bool(decision.get("should_retry"))
+        persisted_status = "retry_wait" if should_retry else status
+        persisted_step = "retry_wait" if should_retry else (
+            "checkpoint" if submit_started else "failed"
+        )
+        retry_category = str(decision.get("category") or "")
+        retry_reason = str(decision.get("reason") or "")
+        next_attempt_at = str(decision.get("next_attempt_at") or "")
+        exhausted = bool(decision.get("exhausted"))
+        persisted_message = message
+        if should_retry:
+            delay = int(decision.get("delay_seconds") or 0)
+            attempt_count = int(decision_task.get("attempt_count") or 0)
+            maximum = int(browser_recovery.recovery_policy()["max_attempts"])
+            persisted_message = (
+                f"Recoverable {retry_category.replace('_', ' ')} failure. "
+                f"Attempt {attempt_count + 1} of {maximum} is scheduled"
+                f"{f' in {delay} seconds' if delay else ' now'}."
+            )
         with connect() as conn:
             conn.execute(
                 """
                 UPDATE application_tasks
                 SET status = ?, current_step = ?, message = ?, checkpoint_kind = ?,
-                    checkpoint_json = ?, completed_at = ?, updated_at = ?
+                    checkpoint_json = ?, next_attempt_at = ?, retry_category = ?,
+                    retry_reason = ?, retry_exhausted = ?, completed_at = ?,
+                    updated_at = ?
                 WHERE id = ?
                 """,
                 (
-                    status,
-                    "checkpoint" if submit_started else "failed",
-                    message,
+                    persisted_status,
+                    persisted_step,
+                    persisted_message,
                     kind,
                     json.dumps({"target_url": task["target_url"]}) if submit_started else "{}",
-                    "" if submit_started else now_iso(),
+                    next_attempt_at,
+                    retry_category,
+                    retry_reason,
+                    1 if exhausted else 0,
+                    "" if submit_started or should_retry else now_iso(),
                     now_iso(),
                     task_id,
                 ),
             )
-        _record_task_event(
-            task_id,
-            "checkpoint" if submit_started else "failed",
-            message,
-            "error",
-            {"kind": kind} if kind else {},
-        )
+        if should_retry:
+            _record_task_event(
+                task_id,
+                "retry_wait",
+                persisted_message,
+                "warning",
+                {
+                    "category": retry_category,
+                    "next_attempt_at": next_attempt_at,
+                    "attempt_count": int(decision_task.get("attempt_count") or 0),
+                },
+            )
+        else:
+            _record_task_event(
+                task_id,
+                "checkpoint" if submit_started else "failed",
+                persisted_message,
+                "error",
+                {
+                    **({"kind": kind} if kind else {}),
+                    "retry_reason": retry_reason,
+                    "retry_exhausted": exhausted,
+                },
+            )
     _record_diagnostic_safely(
         task,
         status=diagnostic_status,
@@ -1221,7 +1385,9 @@ def resolve_checkpoint(
             UPDATE application_tasks
             SET status = 'queued', current_step = 'queued', message = ?,
                 answers_json = ?, final_submit_approved = ?,
-                checkpoint_kind = '', checkpoint_json = '{}', updated_at = ?
+                checkpoint_kind = '', checkpoint_json = '{}',
+                next_attempt_at = '', retry_category = '', retry_reason = '',
+                retry_exhausted = 0, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -1256,7 +1422,9 @@ def resume_login_tasks(session_id: int) -> list[int]:
             """
             UPDATE application_tasks
             SET status = 'queued', current_step = 'queued', message = ?,
-                checkpoint_kind = '', checkpoint_json = '{}', updated_at = ?
+                checkpoint_kind = '', checkpoint_json = '{}',
+                next_attempt_at = '', retry_category = '', retry_reason = '',
+                retry_exhausted = 0, updated_at = ?
             WHERE browser_session_id = ? AND status = 'checkpoint'
               AND checkpoint_kind IN ('login', 'session_busy')
             """,
@@ -1293,7 +1461,8 @@ def resume_manual_task(
             UPDATE application_tasks
             SET status = 'queued', current_step = 'queued', message = ?,
                 resume_url = ?, checkpoint_kind = '', checkpoint_json = '{}',
-                updated_at = ?
+                next_attempt_at = '', retry_category = '', retry_reason = '',
+                retry_exhausted = 0, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -1334,7 +1503,9 @@ def complete_manual_submission(
             UPDATE application_tasks
             SET status = 'submitted', current_step = 'submitted', message = ?,
                 result_json = ?, checkpoint_kind = '', checkpoint_json = '{}',
-                resume_url = '', completed_at = ?, updated_at = ?
+                resume_url = '', next_attempt_at = '', retry_category = '',
+                retry_reason = '', retry_exhausted = 0,
+                completed_at = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -1366,6 +1537,60 @@ def complete_manual_submission(
         manual=True,
         count_attempt=False,
     )
+    _record_recovery_safely(
+        task,
+        status="submitted",
+        checkpoint_kind="",
+        message=message,
+        manual=True,
+    )
+    return get_task(task_id) or {}
+
+
+def retry_task(task_id: int, reset_circuit: bool = False) -> dict[str, Any]:
+    task = row("SELECT * FROM application_tasks WHERE id = ?", (task_id,))
+    if not task:
+        raise ValueError("Browser application task does not exist")
+    if task.get("submit_started_at") or task.get("checkpoint_kind") == "submission_uncertain":
+        raise ValueError(
+            "This task may have submitted already. Verify the employer site instead of retrying."
+        )
+    if task["status"] not in {"failed", "retry_wait"}:
+        raise ValueError("Only failed or waiting browser tasks can be retried")
+    app = _application_record(int(task["application_id"]))
+    if not app or app["status"] == "submitted":
+        raise ValueError("This application is already submitted or no longer available")
+    gate = browser_recovery.attempt_gate(task)
+    if not gate["allowed"]:
+        if not reset_circuit:
+            raise ValueError(
+                "The ATS circuit is open. Reset the circuit explicitly before retrying."
+            )
+        browser_recovery.reset_circuit(
+            str(task.get("adapter") or ""),
+            browser_recovery.task_hostname(task),
+        )
+    now = now_iso()
+    message = "Manual retry approved. Browser application re-queued."
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE application_tasks
+            SET status = 'queued', current_step = 'queued', message = ?,
+                next_attempt_at = '', retry_category = '', retry_reason = '',
+                retry_exhausted = 0, completed_at = '', updated_at = ?
+            WHERE id = ?
+            """,
+            (message, now, task_id),
+        )
+    _record_task_event(
+        task_id,
+        "queued",
+        message,
+        "warning",
+        {"manual_retry": True, "circuit_reset": reset_circuit},
+    )
+    _worker_event.set()
     return get_task(task_id) or {}
 
 
@@ -1373,8 +1598,8 @@ def cancel_task(task_id: int) -> dict[str, Any]:
     task = row("SELECT * FROM application_tasks WHERE id = ?", (task_id,))
     if not task:
         raise ValueError("Browser application task does not exist")
-    if task["status"] not in {"queued", "checkpoint"}:
-        raise ValueError("Only queued or checkpointed browser tasks can be cancelled")
+    if task["status"] not in {"queued", "retry_wait", "checkpoint"}:
+        raise ValueError("Only queued, waiting, or checkpointed browser tasks can be cancelled")
     session_id = int(task.get("browser_session_id") or 0)
     session = browser_sessions.get_session(session_id) if session_id else None
     if session and session["active"]:
@@ -1384,8 +1609,8 @@ def cancel_task(task_id: int) -> dict[str, Any]:
             """
             UPDATE application_tasks
             SET status = 'cancelled', current_step = 'cancelled', message = ?,
-                completed_at = ?, updated_at = ?
-            WHERE id = ? AND status IN ('queued', 'checkpoint')
+                next_attempt_at = '', completed_at = ?, updated_at = ?
+            WHERE id = ? AND status IN ('queued', 'retry_wait', 'checkpoint')
             """,
             ("Browser application task cancelled.", now_iso(), now_iso(), task_id),
         )
@@ -1401,6 +1626,7 @@ def start_worker() -> None:
         if _worker_started:
             return
         browser_sessions.recover_interrupted_handoffs()
+        browser_recovery.recover_interrupted_circuits()
         with connect() as conn:
             conn.execute(
                 """

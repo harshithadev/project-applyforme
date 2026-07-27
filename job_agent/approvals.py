@@ -603,7 +603,8 @@ def _skip_application(application_id: int) -> None:
     for task in rows(
         """
         SELECT id FROM application_tasks
-        WHERE application_id = ? AND status IN ('queued', 'checkpoint')
+        WHERE application_id = ?
+          AND status IN ('queued', 'retry_wait', 'checkpoint')
         """,
         (application_id,),
     ):

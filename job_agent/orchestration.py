@@ -345,7 +345,7 @@ def advance_item(
                     str(browser_task["message"]),
                 )
                 return get_item(item_id)
-            if browser_task["status"] in {"queued", "running"}:
+            if browser_task["status"] in {"queued", "running", "retry_wait"}:
                 _transition(
                     item_id,
                     "applying",
@@ -570,7 +570,7 @@ def skip_item(item_id: int) -> dict[str, Any]:
             and browser_task["checkpoint_kind"] == "submission_uncertain"
         ):
             raise ValueError("Verify the uncertain submission before changing this pipeline item")
-        if browser_task and browser_task["status"] in {"queued", "checkpoint"}:
+        if browser_task and browser_task["status"] in {"queued", "retry_wait", "checkpoint"}:
             automation.cancel_task(int(browser_task["id"]))
         with connect() as conn:
             conn.execute(

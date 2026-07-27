@@ -192,7 +192,8 @@ def mark_application_submitted(application_id: int) -> None:
             SET status = 'cancelled', current_step = 'cancelled',
                 message = 'Application was marked submitted outside this browser task.',
                 completed_at = ?, updated_at = ?
-            WHERE application_id = ? AND status IN ('queued', 'checkpoint')
+            WHERE application_id = ?
+              AND status IN ('queued', 'retry_wait', 'checkpoint')
             """,
             (now_iso(), now_iso(), application_id),
         )
