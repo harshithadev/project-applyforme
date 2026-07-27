@@ -72,10 +72,16 @@ function compileStatusClass(status) {
     : "pending";
 }
 
-function formatJobDate(value) {
+function formatJobDate(value, precision = "unknown") {
   if (!value) return "Date not listed";
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "Date not listed" : `Posted/updated ${parsed.toLocaleDateString()}`;
+  if (Number.isNaN(parsed.getTime())) return "Date not listed";
+  if (precision === "date") {
+    const parts = String(value).slice(0, 10).split("-").map(Number);
+    const localDate = new Date(parts[0], parts[1] - 1, parts[2]);
+    return `Posted/updated ${localDate.toLocaleDateString()} · date only`;
+  }
+  return `Posted/updated ${parsed.toLocaleString()}`;
 }
 
 async function loadState() {
@@ -317,7 +323,7 @@ function renderJobs(jobs) {
         </div>
         <span class="status">${escapeHtml(job.status)}</span>
       </div>
-      <p class="job-facts">${escapeHtml(job.location || "Location not listed")} · ${escapeHtml(formatJobDate(job.posted_at))}</p>
+      <p class="job-facts">${escapeHtml(job.location || "Location not listed")} · ${escapeHtml(formatJobDate(job.posted_at, job.metadata?.posted_at_precision))}</p>
       <p>${escapeHtml((job.description || "").slice(0, 420))}</p>
       <div class="match-reasons">
         ${(job.match_reasons || []).map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}
@@ -1264,10 +1270,28 @@ function populateSettings(settings) {
   for (const selector of ["#settingsForm", "#setupPolicyForm"]) {
     const form = $(selector);
     for (const [key, value] of Object.entries(settings)) {
-      const field = form.elements[key];
-      if (field) field.value = value;
+      const fields = form.querySelectorAll(`[name="${key}"]`);
+      fields.forEach((field) => {
+        if (field.type === "radio") {
+          field.checked = field.value === value;
+        } else if (field.type === "checkbox") {
+          field.checked = value === "true";
+        } else {
+          field.value = value;
+        }
+      });
     }
+    updatePostingAgeControls(form);
   }
+}
+
+function updatePostingAgeControls(form) {
+  if (!form) return;
+  const selected = form.querySelector("input[name='posted_age_mode']:checked");
+  const mode = selected?.value || "days";
+  form.querySelectorAll("[data-posted-age-mode]").forEach((field) => {
+    field.hidden = field.dataset.postedAgeMode !== mode;
+  });
 }
 
 function setView(view) {
@@ -1802,6 +1826,8 @@ function bindEvents() {
   $("#settingsForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+    payload.include_unknown_posted_at = event.currentTarget.elements
+      .include_unknown_posted_at.checked ? "true" : "false";
     await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
     toast("Settings saved.");
     await loadState();
@@ -1813,6 +1839,10 @@ function bindEvents() {
     await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
     toast("Operating policy saved.");
     await loadState();
+  });
+
+  $("#settingsForm").querySelectorAll("input[name='posted_age_mode']").forEach((field) => {
+    field.addEventListener("change", () => updatePostingAgeControls($("#settingsForm")));
   });
 
   $("#ruleForm").addEventListener("submit", async (event) => {

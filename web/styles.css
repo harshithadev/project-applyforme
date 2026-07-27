@@ -16,6 +16,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -1409,6 +1413,81 @@ main {
   grid-template-columns: repeat(2, minmax(220px, 1fr));
 }
 
+.posting-age-settings {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
+  gap: 10px 16px;
+  margin: 0;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.posting-age-settings legend {
+  padding: 0 0 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.segmented-control {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(100%, 420px);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.segmented-control label {
+  display: block;
+  position: relative;
+}
+
+.segmented-control label + label {
+  border-left: 1px solid var(--line);
+}
+
+.segmented-control input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented-control span {
+  display: block;
+  padding: 9px 12px;
+  color: var(--muted);
+  text-align: center;
+  cursor: pointer;
+}
+
+.segmented-control input:checked + span {
+  background: var(--ink);
+  color: white;
+}
+
+.segmented-control input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.checkbox-setting {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-setting input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -1498,6 +1577,10 @@ textarea {
   .approval-fields,
   .checkpoint-fields,
   .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .posting-age-settings {
     grid-template-columns: 1fr;
   }
 

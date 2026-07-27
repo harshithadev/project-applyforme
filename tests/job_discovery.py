@@ -141,6 +141,7 @@ def main() -> None:
         assert "utm_" not in generic["url"]
         assert generic["posted_at"] and int(generic["score"]) >= 80
         assert "Role:" in generic["match_reasons"]
+        assert json.loads(generic["metadata"])["posted_at_precision"] == "exact"
         language_match = jobs.evaluate_posting(
             job_sources.JobPosting(
                 title="C++ Engineer",
@@ -157,6 +158,99 @@ def main() -> None:
             },
         )
         assert language_match.accepted and language_match.score >= 90
+
+        age_filter_base = {
+            "role_keywords": "Python",
+            "target_companies": "ExampleCo",
+            "locations": "remote",
+            "include_unknown_posted_at": "false",
+        }
+        exact_recent = job_sources.JobPosting(
+            title="Python Engineer",
+            company="ExampleCo",
+            url="https://example.test/jobs/recent-exact",
+            description="Build Python services.",
+            location="Remote",
+            posted_at=(datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat(),
+            metadata={"posted_at_precision": "exact"},
+        )
+        strict_hour = jobs.evaluate_posting(
+            exact_recent,
+            {
+                **age_filter_base,
+                "posted_age_mode": "hours",
+                "posted_within_hours": "1",
+            },
+        )
+        two_hours = jobs.evaluate_posting(
+            exact_recent,
+            {
+                **age_filter_base,
+                "posted_age_mode": "hours",
+                "posted_within_hours": "2",
+            },
+        )
+        assert not strict_hour.accepted and "hour old" in strict_hour.rejection
+        assert two_hours.accepted and any("1h ago" in reason for reason in two_hours.reasons)
+
+        date_only = job_sources.JobPosting(
+            title="Python Engineer",
+            company="ExampleCo",
+            url="https://example.test/jobs/date-only",
+            description="Build Python services.",
+            location="Remote",
+            posted_at=(datetime.now().astimezone() - timedelta(days=1)).date().isoformat(),
+            metadata={"posted_at_precision": "date"},
+        )
+        hours_reject_date = jobs.evaluate_posting(
+            date_only,
+            {
+                **age_filter_base,
+                "posted_age_mode": "hours",
+                "posted_within_hours": "24",
+            },
+        )
+        days_include_date = jobs.evaluate_posting(
+            date_only,
+            {
+                **age_filter_base,
+                "posted_age_mode": "days",
+                "posted_within_days": "1",
+            },
+        )
+        assert not hours_reject_date.accepted
+        assert "no exact time" in hours_reject_date.rejection
+        assert days_include_date.accepted
+        assert any("date only" in reason for reason in days_include_date.reasons)
+
+        unknown_date = job_sources.JobPosting(
+            title="Python Engineer",
+            company="ExampleCo",
+            url="https://example.test/jobs/unknown-date",
+            description="Build Python services.",
+            location="Remote",
+        )
+        unknown_excluded = jobs.evaluate_posting(
+            unknown_date,
+            {
+                **age_filter_base,
+                "posted_age_mode": "days",
+                "posted_within_days": "1",
+            },
+        )
+        unknown_included = jobs.evaluate_posting(
+            unknown_date,
+            {
+                **age_filter_base,
+                "posted_age_mode": "days",
+                "posted_within_days": "1",
+                "include_unknown_posted_at": "true",
+            },
+        )
+        assert not unknown_excluded.accepted
+        assert unknown_included.accepted
+        assert job_sources.posting_timestamp("2026-07-27")[1] == "date"
+        assert job_sources.posting_timestamp("2026-07-27T12:30:00Z")[1] == "exact"
 
         now = datetime.now(timezone.utc).isoformat()
         greenhouse_payload = {
@@ -175,6 +269,7 @@ def main() -> None:
         assert len(greenhouse) == 1
         assert greenhouse[0].description == "Build Python APIs & automation."
         assert greenhouse[0].external_id == "101"
+        assert greenhouse[0].metadata["posted_at_precision"] == "exact"
         assert "gh_src" not in greenhouse[0].url
 
         lever_payload = [

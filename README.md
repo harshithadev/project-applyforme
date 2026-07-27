@@ -12,7 +12,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - A source-grounded structured candidate profile with contact, skills, education, certifications, and evidence.
 - Manual job entry and enriched career-page scanning with Greenhouse, Lever, Ashby, SmartRecruiters, and Workday adapters.
 - Persistent per-source cursors, pagination status, scan counts, and errors in the dashboard.
-- Role, company, location, and posting-age filters with canonical URL and ATS-ID deduplication.
+- Role, company, location, and toggleable hour/calendar-day posting-age filters with canonical URL and ATS-ID deduplication.
 - A durable score-gated pipeline from discovery through tailoring, review, and guarded browser automation.
 - Per-job pipeline history, retries, skips, daily intake limits, and crash recovery.
 - A per-user macOS login service with restart controls and local stdout/stderr logs.
@@ -170,7 +170,7 @@ Add company career pages or public Greenhouse, Lever, Ashby, SmartRecruiters, an
 
 Ashby, SmartRecruiters, and Workday scans paginate up to **Max jobs per source** per run. The next offset is stored in SQLite and resumed on the next scan; the **Source scans** panel shows progress, errors, and when a full cycle completes.
 
-The posting-age filter is applied when a source supplies a date. Jobs without a source date remain visible and are marked accordingly rather than being silently discarded.
+The posting-age filter can run in **Hours** or **Calendar days** mode. Hours mode applies an exact elapsed-time cutoff and therefore requires a source timestamp. Calendar days mode uses local calendar dates and includes sources that publish only a date without a time. **Include jobs without a posting date** separately controls postings whose source supplies no date at all.
 
 ## Application pipeline
 

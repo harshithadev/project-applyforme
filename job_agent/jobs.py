@@ -45,6 +45,26 @@ def _timestamp(value: str) -> datetime | None:
         return None
 
 
+def _posting_precision(posting: JobPosting) -> str:
+    configured = str(posting.metadata.get("posted_at_precision") or "").casefold()
+    if configured in {"exact", "date", "unknown"}:
+        return configured
+    if not posting.posted_at:
+        return "unknown"
+    return (
+        "date"
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", posting.posted_at.strip())
+        else "exact"
+    )
+
+
+def _positive_int(value: object, default: int = 0) -> int:
+    try:
+        return max(0, int(str(value or default)))
+    except ValueError:
+        return default
+
+
 def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDecision:
     keywords = split_csv(settings.get("role_keywords", ""))
     locations = split_csv(settings.get("locations", ""))
@@ -72,23 +92,65 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
     if location_terms and location_blob and not location_hits:
         return MatchDecision(False, 0, [], "location did not match")
 
-    try:
-        maximum_age = max(0, int(settings.get("posted_within_days", "0") or "0"))
-    except ValueError:
-        maximum_age = 0
+    age_mode = str(settings.get("posted_age_mode", "days") or "days").casefold()
+    if age_mode not in {"hours", "days"}:
+        age_mode = "days"
+    maximum_age = _positive_int(
+        settings.get(
+            "posted_within_hours" if age_mode == "hours" else "posted_within_days",
+            "0",
+        )
+    )
+    include_unknown = (
+        str(settings.get("include_unknown_posted_at", "true")).casefold() == "true"
+    )
     posted = _timestamp(posting.posted_at)
-    age_days: int | None = None
+    precision = _posting_precision(posting)
+    age_value: int | None = None
+    age_reason = ""
     if posted:
-        age_days = max(0, (datetime.now(timezone.utc) - posted).days)
-        if maximum_age and age_days > maximum_age:
-            return MatchDecision(False, 0, [], f"posting is {age_days} days old")
+        current = datetime.now(timezone.utc)
+        if age_mode == "hours":
+            if maximum_age and precision != "exact":
+                return MatchDecision(
+                    False,
+                    0,
+                    [],
+                    "posting has a date but no exact time",
+                )
+            elapsed_seconds = max(0, (current - posted).total_seconds())
+            age_value = int(elapsed_seconds // 3_600)
+            if maximum_age and elapsed_seconds > maximum_age * 3_600:
+                unit = "hour" if age_value == 1 else "hours"
+                return MatchDecision(False, 0, [], f"posting is {age_value} {unit} old")
+            age_reason = f"Posted/updated {age_value}h ago"
+        else:
+            local_now = datetime.now().astimezone()
+            posted_date = (
+                posted.date()
+                if precision == "date"
+                else posted.astimezone(local_now.tzinfo).date()
+            )
+            age_value = max(0, (local_now.date() - posted_date).days)
+            if maximum_age and age_value > maximum_age:
+                unit = "day" if age_value == 1 else "days"
+                return MatchDecision(
+                    False,
+                    0,
+                    [],
+                    f"posting is {age_value} calendar {unit} old",
+                )
+            date_only = " (date only)" if precision == "date" else ""
+            age_reason = f"Posted/updated {age_value}d ago{date_only}"
+    elif maximum_age and not include_unknown:
+        return MatchDecision(False, 0, [], "posting date is not listed")
 
     role_ratio = len(role_hits) / max(len(keyword_terms), 1) if keyword_terms else 1
     title_ratio = len(title_hits) / max(len(keyword_terms), 1) if keyword_terms else 1
     score = round(role_ratio * 60 + title_ratio * 20)
     score += 10 if location_hits else 6 if not location_terms else 4 if not location_blob else 0
     score += 5 if company_terms else 3
-    score += 5 if age_days is not None and (not maximum_age or age_days <= maximum_age) else 2
+    score += 5 if age_value is not None else 2
     reasons = []
     if role_hits:
         reasons.append(f"Role: {', '.join(role_hits[:4])}")
@@ -98,8 +160,8 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
         reasons.append("Location not listed")
     if company_terms:
         reasons.append("Target company")
-    if age_days is not None:
-        reasons.append(f"Posted/updated {age_days}d ago")
+    if age_reason:
+        reasons.append(age_reason)
     else:
         reasons.append("Posting date not listed")
     return MatchDecision(True, min(100, score), reasons)

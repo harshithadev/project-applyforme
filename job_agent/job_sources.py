@@ -195,6 +195,17 @@ def normalize_timestamp(value: object) -> str:
         return ""
 
 
+def posting_timestamp(value: object) -> tuple[str, str]:
+    normalized = normalize_timestamp(value)
+    if not normalized:
+        return "", "unknown"
+    if isinstance(value, (int, float)):
+        return normalized, "exact"
+    text = str(value).strip()
+    precision = "date" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else "exact"
+    return normalized, precision
+
+
 def fetch_url(url: str) -> str:
     request = urllib.request.Request(
         url,
@@ -333,6 +344,9 @@ def parse_greenhouse_payload(payload: object, company: str) -> list[JobPosting]:
         if not title or not url:
             continue
         description = html_to_text(item.get("content"))
+        posted_at, posted_at_precision = posting_timestamp(
+            item.get("first_published") or item.get("updated_at")
+        )
         postings.append(
             JobPosting(
                 title=title,
@@ -341,11 +355,14 @@ def parse_greenhouse_payload(payload: object, company: str) -> list[JobPosting]:
                 description=description,
                 location=location,
                 source="greenhouse",
-                posted_at=normalize_timestamp(item.get("first_published") or item.get("updated_at")),
+                posted_at=posted_at,
                 external_id=str(item.get("id") or ""),
                 apply_url=url,
                 workplace_type="remote" if "remote" in location.lower() else "",
-                metadata={"requisition_id": item.get("requisition_id")},
+                metadata={
+                    "requisition_id": item.get("requisition_id"),
+                    "posted_at_precision": posted_at_precision,
+                },
             )
         )
     return postings
@@ -370,6 +387,7 @@ def parse_lever_payload(payload: object, company: str) -> list[JobPosting]:
         title = clean_text(item.get("text"))
         if not title or not url:
             continue
+        posted_at, posted_at_precision = posting_timestamp(item.get("createdAt"))
         postings.append(
             JobPosting(
                 title=title,
@@ -378,7 +396,7 @@ def parse_lever_payload(payload: object, company: str) -> list[JobPosting]:
                 description=description,
                 location=location,
                 source="lever",
-                posted_at=normalize_timestamp(item.get("createdAt")),
+                posted_at=posted_at,
                 external_id=str(item.get("id") or ""),
                 apply_url=canonicalize_url(str(item.get("applyUrl") or url)),
                 workplace_type=workplace_type,
@@ -386,6 +404,7 @@ def parse_lever_payload(payload: object, company: str) -> list[JobPosting]:
                     "team": categories.get("team", ""),
                     "department": categories.get("department", ""),
                     "commitment": categories.get("commitment", ""),
+                    "posted_at_precision": posted_at_precision,
                 },
             )
         )
@@ -409,6 +428,7 @@ def parse_ashby_payload(payload: object, company: str) -> list[JobPosting]:
         external_id = clean_text(item.get("id"))
         if not external_id:
             external_id = urlsplit(url).path.rstrip("/").split("/")[-1]
+        posted_at, posted_at_precision = posting_timestamp(item.get("publishedAt"))
         postings.append(
             JobPosting(
                 title=title,
@@ -418,7 +438,7 @@ def parse_ashby_payload(payload: object, company: str) -> list[JobPosting]:
                 or html_to_text(item.get("descriptionHtml")),
                 location=location,
                 source="ashby",
-                posted_at=normalize_timestamp(item.get("publishedAt")),
+                posted_at=posted_at,
                 external_id=external_id,
                 apply_url=canonicalize_url(str(item.get("applyUrl") or url)),
                 workplace_type=workplace_type,
@@ -426,6 +446,7 @@ def parse_ashby_payload(payload: object, company: str) -> list[JobPosting]:
                     "department": item.get("department", ""),
                     "team": item.get("team", ""),
                     "employment_type": item.get("employmentType", ""),
+                    "posted_at_precision": posted_at_precision,
                 },
             )
         )
@@ -482,6 +503,9 @@ def parse_smartrecruiters_payload(
             continue
         company_data = item.get("company") if isinstance(item.get("company"), dict) else {}
         workplace_type = "remote" if bool(item.get("remote")) else ""
+        posted_at, posted_at_precision = posting_timestamp(
+            item.get("releasedDate") or item.get("createdOn")
+        )
         postings.append(
             JobPosting(
                 title=title,
@@ -490,7 +514,7 @@ def parse_smartrecruiters_payload(
                 description=_smartrecruiters_description(item),
                 location=_smartrecruiters_location(item),
                 source="smartrecruiters",
-                posted_at=normalize_timestamp(item.get("releasedDate") or item.get("createdOn")),
+                posted_at=posted_at,
                 external_id=external_id,
                 apply_url=canonicalize_url(str(item.get("applyUrl") or url)),
                 workplace_type=workplace_type,
@@ -499,6 +523,7 @@ def parse_smartrecruiters_payload(
                     "uuid": item.get("uuid", ""),
                     "department": item.get("department", {}),
                     "employment_type": item.get("typeOfEmployment", {}),
+                    "posted_at_precision": posted_at_precision,
                 },
             )
         )
@@ -538,6 +563,7 @@ def parse_workday_posting(
         or (bullet_fields[0] if bullet_fields else "")
         or urlsplit(url).path.rstrip("/").split("/")[-1]
     )
+    posted_at, posted_at_precision = posting_timestamp(info.get("startDate"))
     return JobPosting(
         title=title,
         company=clean_text(organization.get("name")) or company,
@@ -545,7 +571,7 @@ def parse_workday_posting(
         description=html_to_text(info.get("jobDescription")),
         location=location,
         source="workday",
-        posted_at=normalize_timestamp(info.get("startDate")),
+        posted_at=posted_at,
         external_id=external_id,
         apply_url=url,
         workplace_type=workplace_type,
@@ -553,6 +579,7 @@ def parse_workday_posting(
             "time_type": info.get("timeType") or item.get("timeType", ""),
             "end_date": normalize_timestamp(info.get("endDate")),
             "posting_site": info.get("jobPostingSiteId") or site,
+            "posted_at_precision": posted_at_precision,
         },
     )
 
@@ -621,6 +648,7 @@ def parse_job_page(body: str, url: str, fallback_title: str, fallback_company: s
         organization = structured.get("hiringOrganization")
         company = clean_text(organization.get("name")) if isinstance(organization, dict) else ""
         workplace_type = clean_text(structured.get("jobLocationType")).lower()
+        posted_at, posted_at_precision = posting_timestamp(structured.get("datePosted"))
         return JobPosting(
             title=clean_text(structured.get("title")) or fallback_title,
             company=company or fallback_company,
@@ -628,13 +656,16 @@ def parse_job_page(body: str, url: str, fallback_title: str, fallback_company: s
             description=html_to_text(structured.get("description")),
             location=_job_location(structured),
             source="career-detail",
-            posted_at=normalize_timestamp(structured.get("datePosted")),
+            posted_at=posted_at,
             external_id=clean_text(structured.get("identifier", {}).get("value"))
             if isinstance(structured.get("identifier"), dict)
             else "",
             apply_url=canonicalize_url(str(structured.get("url") or url)),
             workplace_type=workplace_type,
-            metadata={"valid_through": normalize_timestamp(structured.get("validThrough"))},
+            metadata={
+                "valid_through": normalize_timestamp(structured.get("validThrough")),
+                "posted_at_precision": posted_at_precision,
+            },
         )
 
     heading = clean_text(" ".join(parser.heading_parts))
@@ -650,6 +681,7 @@ def parse_job_page(body: str, url: str, fallback_title: str, fallback_company: s
         description=description,
         source="career-detail",
         apply_url=canonicalize_url(url),
+        metadata={"posted_at_precision": "unknown"},
     )
 
 

@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterator
@@ -318,6 +318,48 @@ def main() -> None:
             )
         else:
             record("FAIL", "Job discovery quality", f"Enriched job was incomplete: {discovered_job}")
+
+        date_only_posting = job_sources.JobPosting(
+            title="Platform Engineer",
+            company="ExampleCo",
+            url="https://example.test/jobs/date-only-audit",
+            description="Build production Python services.",
+            location="Remote",
+            posted_at=(datetime.now().astimezone() - timedelta(days=1)).date().isoformat(),
+            metadata={"posted_at_precision": "date"},
+        )
+        age_settings = {
+            "role_keywords": "platform engineer, Python",
+            "target_companies": "ExampleCo",
+            "locations": "remote",
+            "include_unknown_posted_at": "false",
+        }
+        day_window = jobs.evaluate_posting(
+            date_only_posting,
+            {
+                **age_settings,
+                "posted_age_mode": "days",
+                "posted_within_days": "1",
+            },
+        )
+        hour_window = jobs.evaluate_posting(
+            date_only_posting,
+            {
+                **age_settings,
+                "posted_age_mode": "hours",
+                "posted_within_hours": "24",
+            },
+        )
+        record(
+            "PASS" if day_window.accepted and not hour_window.accepted else "FAIL",
+            "Hour and calendar-day job windows",
+            (
+                "Hours mode requires an exact timestamp, while Calendar days mode "
+                "includes date-only postings from the selected local-date window."
+            )
+            if day_window.accepted and not hour_window.accepted
+            else f"days={day_window}, hours={hour_window}",
+        )
 
         tailored_job_id = jobs.add_manual_job(
             {

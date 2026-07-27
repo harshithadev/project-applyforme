@@ -535,9 +535,29 @@
               <label>Scan interval minutes
                 <input name="scan_interval_minutes" type="number" min="0" max="1440" />
               </label>
-              <label>Posted within days
-                <input name="posted_within_days" type="number" min="0" max="365" />
-              </label>
+              <fieldset class="posting-age-settings">
+                <legend>Posting age</legend>
+                <div class="segmented-control">
+                  <label>
+                    <input name="posted_age_mode" type="radio" value="hours" />
+                    <span>Hours</span>
+                  </label>
+                  <label>
+                    <input name="posted_age_mode" type="radio" value="days" />
+                    <span>Calendar days</span>
+                  </label>
+                </div>
+                <label data-posted-age-mode="hours">Posted within hours
+                  <input name="posted_within_hours" type="number" min="0" max="8760" />
+                </label>
+                <label data-posted-age-mode="days">Posted within calendar days
+                  <input name="posted_within_days" type="number" min="0" max="365" />
+                </label>
+                <label class="checkbox-setting">
+                  <input name="include_unknown_posted_at" type="checkbox" value="true" />
+                  <span>Include jobs without a posting date</span>
+                </label>
+              </fieldset>
               <label>Maximum jobs per source
                 <input name="max_jobs_per_source" type="number" min="1" max="200" />
               </label>

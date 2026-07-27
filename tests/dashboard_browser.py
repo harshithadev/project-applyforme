@@ -17,7 +17,7 @@ def main() -> None:
         os.environ["APPLYFORME_ROOT"] = tmp
 
         from job_agent import app
-        from job_agent.db import init_db
+        from job_agent.db import init_db, setting
         from playwright.sync_api import sync_playwright
 
         init_db()
@@ -53,6 +53,38 @@ def main() -> None:
                 assert page.locator("#adapterRegistryMeta").inner_text().startswith(
                     "5 versioned"
                 )
+                page.locator(".nav-item[data-view='settings']").click()
+                assert page.locator(
+                    "input[name='posted_age_mode'][value='days']"
+                ).is_checked()
+                assert page.locator(
+                    "[data-posted-age-mode='days']"
+                ).is_visible()
+                assert page.locator(
+                    "[data-posted-age-mode='hours']"
+                ).is_hidden()
+                page.locator(".segmented-control span", has_text="Hours").click()
+                assert page.locator(
+                    "input[name='posted_age_mode'][value='hours']"
+                ).is_checked()
+                assert page.locator(
+                    "[data-posted-age-mode='hours']"
+                ).is_visible()
+                assert page.locator(
+                    "[data-posted-age-mode='days']"
+                ).is_hidden()
+                assert page.locator(
+                    "input[name='include_unknown_posted_at']"
+                ).is_checked()
+                page.locator("input[name='posted_within_hours']").fill("6")
+                page.locator("input[name='include_unknown_posted_at']").uncheck()
+                with page.expect_response("**/api/settings"):
+                    page.get_by_role("button", name="Save settings").click()
+                page.wait_for_load_state("networkidle")
+                assert setting("posted_age_mode") == "hours"
+                assert setting("posted_within_hours") == "6"
+                assert setting("include_unknown_posted_at") == "false"
+                page.locator("button[data-view='applications']").click()
                 desktop = Path(tmp) / "dashboard-desktop.png"
                 page.screenshot(path=str(desktop), full_page=True)
                 assert desktop.stat().st_size > 10_000
