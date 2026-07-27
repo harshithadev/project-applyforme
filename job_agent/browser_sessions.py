@@ -18,12 +18,24 @@ from .db import connect, log, now_iso, row, rows, setting
 ACTIVE_STATUSES = frozenset(
     {"in_use", "handoff_opening", "awaiting_user", "handoff_closing"}
 )
+MANUAL_TAKEOVER_KINDS = frozenset(
+    {
+        "captcha",
+        "unsupported_site",
+        "unsupported_form",
+        "submit_control",
+        "step_limit",
+    }
+)
+MANUAL_RESUME_KINDS = MANUAL_TAKEOVER_KINDS - {"unsupported_site"}
 
 
 @dataclass
 class HandoffControl:
     session_id: int
     task_id: int
+    handoff_kind: str
+    checkpoint_kind: str
     event: threading.Event = field(default_factory=threading.Event)
     action: str = ""
 
@@ -276,6 +288,7 @@ def _set_session_state(
     *,
     active_task_id: int | None,
     verified: bool = False,
+    used: bool = False,
 ) -> None:
     now = now_iso()
     with connect() as conn:
@@ -294,7 +307,7 @@ def _set_session_state(
                 message,
                 1 if verified else 0,
                 now,
-                1 if verified else 0,
+                1 if verified or used else 0,
                 now,
                 now,
                 session_id,
@@ -302,12 +315,20 @@ def _set_session_state(
         )
 
 
-def _prepare_handoff(task_id: int) -> tuple[dict[str, Any], HandoffControl]:
+def _prepare_handoff(
+    task_id: int,
+    handoff_kind: str,
+) -> tuple[dict[str, Any], HandoffControl]:
     task = row("SELECT * FROM application_tasks WHERE id = ?", (task_id,))
     if not task:
         raise ValueError("Browser application task does not exist")
-    if task["status"] != "checkpoint" or task["checkpoint_kind"] != "login":
+    checkpoint_kind = str(task["checkpoint_kind"] or "")
+    if task["status"] != "checkpoint":
+        raise ValueError("Only a checkpointed browser task can open a handoff window")
+    if handoff_kind == "login" and checkpoint_kind != "login":
         raise ValueError("Only a browser task waiting for login can start a sign-in handoff")
+    if handoff_kind == "manual" and checkpoint_kind not in MANUAL_TAKEOVER_KINDS:
+        raise ValueError("This browser checkpoint does not support manual takeover")
     session = session_for_task(task)
     try:
         checkpoint = json.loads(str(task.get("checkpoint_json") or "{}"))
@@ -322,12 +343,22 @@ def _prepare_handoff(task_id: int) -> tuple[dict[str, Any], HandoffControl]:
     with _handoff_lock:
         if session_id in _handoffs or str(session["status"]) in ACTIVE_STATUSES:
             raise ValueError("A browser window is already using this local session")
-        control = HandoffControl(session_id=session_id, task_id=task_id)
+        control = HandoffControl(
+            session_id=session_id,
+            task_id=task_id,
+            handoff_kind=handoff_kind,
+            checkpoint_kind=checkpoint_kind,
+        )
         _handoffs[session_id] = control
+    opening_message = (
+        "Opening a visible browser window for manual sign-in."
+        if handoff_kind == "login"
+        else "Opening a visible browser window for manual takeover."
+    )
     _set_session_state(
         session_id,
         "handoff_opening",
-        "Opening a visible browser window for manual sign-in.",
+        opening_message,
         active_task_id=task_id,
     )
     return session, control
@@ -347,6 +378,34 @@ def _active_page(context: Any) -> Any | None:
         if str(getattr(page, "url", "") or "") not in {"", "about:blank"}
     ]
     return pages[-1] if pages else None
+
+
+def _submission_confirmation_visible(page: Any, content: str) -> bool:
+    from .automation import SUCCESS_PATTERNS
+
+    if not SUCCESS_PATTERNS.search(content):
+        return False
+    submit_buttons = page.locator("button:visible").filter(
+        has_text=re.compile(
+            r"^\s*(?:submit|submit application|send application)\s*$",
+            re.IGNORECASE,
+        )
+    )
+    submit_inputs = page.locator(
+        "input[type='submit'][value*='Submit' i]:visible"
+    )
+    return not submit_buttons.count() and not submit_inputs.count()
+
+
+def _resume_url_allowed(checkpoint_url: str, resume_url: str) -> bool:
+    checkpoint = urlparse(checkpoint_url)
+    resume = urlparse(resume_url)
+    return bool(
+        checkpoint.scheme in {"http", "https"}
+        and resume.scheme in {"http", "https"}
+        and checkpoint.netloc
+        and checkpoint.netloc.casefold() == resume.netloc.casefold()
+    )
 
 
 def _execute_handoff(
@@ -483,7 +542,7 @@ def _execute_handoff(
 
 
 def start_login_handoff(task_id: int) -> dict[str, Any]:
-    session, control = _prepare_handoff(task_id)
+    session, control = _prepare_handoff(task_id, "login")
     threading.Thread(
         target=_execute_handoff,
         args=(session, control),
@@ -497,7 +556,7 @@ def _run_login_handoff_for_test(
     task_id: int,
     interaction: Callable[[Any], None],
 ) -> dict[str, Any]:
-    session, control = _prepare_handoff(task_id)
+    session, control = _prepare_handoff(task_id, "login")
     _execute_handoff(
         session,
         control,
@@ -512,6 +571,8 @@ def complete_login_handoff(session_id: int) -> dict[str, Any]:
         control = _handoffs.get(session_id)
         if not control:
             raise ValueError("No active sign-in window exists for this session")
+        if control.handoff_kind != "login":
+            raise ValueError("This browser window is a manual takeover, not a sign-in handoff")
         if control.action:
             raise ValueError("A sign-in handoff decision has already been received")
         control.action = "complete"
@@ -525,22 +586,418 @@ def complete_login_handoff(session_id: int) -> dict[str, Any]:
     return get_session(session_id) or {}
 
 
-def cancel_login_handoff(session_id: int) -> dict[str, Any]:
+def _cancel_handoff(session_id: int, handoff_kind: str) -> dict[str, Any]:
     with _handoff_lock:
         control = _handoffs.get(session_id)
         if not control:
-            raise ValueError("No active sign-in window exists for this session")
+            raise ValueError("No active browser handoff exists for this session")
+        if control.handoff_kind != handoff_kind:
+            raise ValueError("The active browser window has a different handoff type")
         if control.action:
-            raise ValueError("A sign-in handoff decision has already been received")
+            raise ValueError("A browser handoff decision has already been received")
         control.action = "cancel"
+        control.event.set()
+    label = "Sign-in" if handoff_kind == "login" else "Manual takeover"
+    _set_session_state(
+        session_id,
+        "handoff_closing",
+        f"{label} cancellation received. Closing the browser window.",
+        active_task_id=control.task_id,
+    )
+    return get_session(session_id) or {}
+
+
+def cancel_login_handoff(session_id: int) -> dict[str, Any]:
+    return _cancel_handoff(session_id, "login")
+
+
+def _pause_manual_task(
+    task_id: int,
+    message: str,
+    *,
+    target_url: str = "",
+    screenshot: str = "",
+) -> None:
+    task = row(
+        "SELECT checkpoint_json FROM application_tasks WHERE id = ?",
+        (task_id,),
+    )
+    try:
+        checkpoint = json.loads(str(task["checkpoint_json"] or "{}")) if task else {}
+    except json.JSONDecodeError:
+        checkpoint = {}
+    if not isinstance(checkpoint, dict):
+        checkpoint = {}
+    if target_url:
+        existing_target = str(checkpoint.get("target_url") or "")
+        if not existing_target or _resume_url_allowed(existing_target, target_url):
+            checkpoint["target_url"] = target_url
+        else:
+            checkpoint["observed_url"] = target_url
+    if screenshot:
+        checkpoint["screenshot"] = screenshot
+    checkpoint["manual_takeover"] = True
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE application_tasks
+            SET current_step = 'checkpoint', message = ?, checkpoint_json = ?,
+                updated_at = ?
+            WHERE id = ? AND status = 'checkpoint'
+            """,
+            (message, json.dumps(checkpoint), now_iso(), task_id),
+        )
+
+
+def _execute_manual_takeover(
+    session: dict[str, Any],
+    control: HandoffControl,
+    *,
+    interaction: Callable[[Any], str | None] | None = None,
+    headless: bool = False,
+) -> None:
+    from playwright.sync_api import sync_playwright
+
+    from . import automation
+
+    session_id = control.session_id
+    task_id = control.task_id
+    context = None
+    try:
+        with sync_playwright() as playwright:
+            context = launch_context(playwright, session, headless=headless)
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto(
+                str(session["target_url"]),
+                wait_until="domcontentloaded",
+                timeout=45_000,
+            )
+            _set_session_state(
+                session_id,
+                "awaiting_user",
+                "Complete the blocked browser step, then choose how ApplyForMe should continue.",
+                active_task_id=task_id,
+            )
+            automation._record_task_event(
+                task_id,
+                "manual_takeover",
+                "A visible browser window is waiting for manual action.",
+            )
+            if interaction:
+                control.action = str(interaction(page) or "resume")
+            else:
+                try:
+                    timeout_minutes = int(
+                        setting("browser_login_timeout_minutes", "15") or "15"
+                    )
+                except ValueError:
+                    timeout_minutes = 15
+                deadline = time.monotonic() + max(1, min(timeout_minutes, 60)) * 60
+                while not control.event.wait(timeout=1):
+                    if not context.pages:
+                        control.action = "closed"
+                        break
+                    if time.monotonic() >= deadline:
+                        control.action = "timeout"
+                        break
+            if control.action not in {"resume", "submitted"}:
+                reasons = {
+                    "cancel": "Manual takeover was cancelled. The application remains paused.",
+                    "closed": "The takeover window closed before an outcome was selected.",
+                    "timeout": "The takeover window timed out. The application remains paused.",
+                }
+                message = reasons.get(
+                    control.action,
+                    "Manual takeover ended without a completion outcome.",
+                )
+                _set_session_state(
+                    session_id,
+                    "ready",
+                    message,
+                    active_task_id=None,
+                    used=True,
+                )
+                _pause_manual_task(task_id, message)
+                automation._record_task_event(
+                    task_id,
+                    "manual_takeover",
+                    message,
+                    "warning",
+                )
+                return
+            if (
+                control.action == "resume"
+                and control.checkpoint_kind not in MANUAL_RESUME_KINDS
+            ):
+                message = (
+                    "This unsupported site cannot resume automatically. "
+                    "Complete it manually and choose the verified-submission outcome."
+                )
+                _set_session_state(
+                    session_id,
+                    "ready",
+                    message,
+                    active_task_id=None,
+                    used=True,
+                )
+                _pause_manual_task(task_id, message)
+                automation._record_task_event(
+                    task_id,
+                    "manual_takeover",
+                    message,
+                    "warning",
+                )
+                return
+            _set_session_state(
+                session_id,
+                "handoff_closing",
+                "Inspecting the manual browser outcome before closing the window.",
+                active_task_id=task_id,
+            )
+            active_page = _active_page(context)
+            if active_page is None:
+                message = "No open takeover page was available. The application remains paused."
+                _set_session_state(
+                    session_id,
+                    "ready",
+                    message,
+                    active_task_id=None,
+                    used=True,
+                )
+                _pause_manual_task(task_id, message)
+                automation._record_task_event(
+                    task_id,
+                    "manual_takeover",
+                    message,
+                    "warning",
+                )
+                return
+            current_url = str(active_page.url or session["target_url"])
+            screenshot = automation._save_screenshot(
+                active_page,
+                automation.get_task(task_id) or {},
+                "04-manual-takeover",
+            )
+            confirmation = automation._confirmation_text(active_page)
+            confirmed_submission = _submission_confirmation_visible(
+                active_page,
+                confirmation,
+            )
+            if _visible_password_field(active_page):
+                message = (
+                    "The takeover browser still appears to be on a sign-in screen. "
+                    "The application remains paused."
+                )
+                _set_session_state(
+                    session_id,
+                    "needs_login",
+                    message,
+                    active_task_id=task_id,
+                    used=True,
+                )
+                _pause_manual_task(
+                    task_id,
+                    message,
+                    target_url=current_url,
+                    screenshot=screenshot,
+                )
+                automation._record_task_event(
+                    task_id,
+                    "manual_takeover",
+                    message,
+                    "warning",
+                )
+                return
+            if control.action == "submitted" and not confirmed_submission:
+                message = (
+                    "Manual submission was not recorded because the page did not show "
+                    "a recognizable confirmation. The application remains paused."
+                )
+                _set_session_state(
+                    session_id,
+                    "ready",
+                    message,
+                    active_task_id=None,
+                    used=True,
+                )
+                _pause_manual_task(
+                    task_id,
+                    message,
+                    target_url=current_url,
+                    screenshot=screenshot,
+                )
+                automation._record_task_event(
+                    task_id,
+                    "manual_takeover",
+                    message,
+                    "warning",
+                )
+                return
+            if control.action == "resume" and confirmed_submission:
+                message = (
+                    "A submission confirmation is visible, so automation was not "
+                    "resumed. Verify the screenshot and mark the application submitted."
+                )
+                _set_session_state(
+                    session_id,
+                    "ready",
+                    message,
+                    active_task_id=None,
+                    used=True,
+                )
+                _pause_manual_task(
+                    task_id,
+                    message,
+                    target_url=current_url,
+                    screenshot=screenshot,
+                )
+                automation._record_task_event(
+                    task_id,
+                    "manual_takeover",
+                    message,
+                    "warning",
+                )
+                return
+            if control.action == "resume" and not _resume_url_allowed(
+                str(session["target_url"]),
+                current_url,
+            ):
+                message = (
+                    "Automation was not resumed because the manual browser moved to "
+                    "a different host. The application remains paused."
+                )
+                _set_session_state(
+                    session_id,
+                    "ready",
+                    message,
+                    active_task_id=None,
+                    used=True,
+                )
+                _pause_manual_task(
+                    task_id,
+                    message,
+                    target_url=current_url,
+                    screenshot=screenshot,
+                )
+                automation._record_task_event(
+                    task_id,
+                    "manual_takeover",
+                    message,
+                    "warning",
+                )
+                return
+            context.close()
+            context = None
+        _set_session_state(
+            session_id,
+            "ready",
+            "Manual browser takeover completed and the local session was saved.",
+            active_task_id=None,
+            used=True,
+        )
+        if control.action == "submitted":
+            automation.complete_manual_submission(
+                task_id,
+                current_url,
+                screenshot,
+            )
+        else:
+            automation.resume_manual_task(
+                task_id,
+                current_url,
+                screenshot,
+            )
+        log(
+            f"Completed a manual {session['adapter']} browser takeover.",
+            meta={
+                "browser_session_id": session_id,
+                "application_task_id": task_id,
+                "outcome": control.action,
+            },
+        )
+    except Exception as exc:
+        message = f"Manual takeover browser failed: {exc}"
+        _set_session_state(
+            session_id,
+            "error",
+            message,
+            active_task_id=task_id,
+        )
+        _pause_manual_task(task_id, message)
+        automation._record_task_event(
+            task_id,
+            "manual_takeover",
+            message,
+            "error",
+        )
+    finally:
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
+        with _handoff_lock:
+            _handoffs.pop(session_id, None)
+
+
+def start_manual_takeover(task_id: int) -> dict[str, Any]:
+    session, control = _prepare_handoff(task_id, "manual")
+    threading.Thread(
+        target=_execute_manual_takeover,
+        args=(session, control),
+        daemon=True,
+        name=f"applyforme-manual-takeover-{session['id']}",
+    ).start()
+    return get_session(int(session["id"])) or {}
+
+
+def _run_manual_takeover_for_test(
+    task_id: int,
+    interaction: Callable[[Any], str | None],
+) -> dict[str, Any]:
+    session, control = _prepare_handoff(task_id, "manual")
+    _execute_manual_takeover(
+        session,
+        control,
+        interaction=interaction,
+        headless=True,
+    )
+    return get_session(int(session["id"])) or {}
+
+
+def complete_manual_takeover(
+    session_id: int,
+    outcome: str,
+) -> dict[str, Any]:
+    cleaned_outcome = str(outcome or "").strip().casefold()
+    if cleaned_outcome not in {"resume", "submitted"}:
+        raise ValueError("Manual takeover outcome must be resume or submitted")
+    with _handoff_lock:
+        control = _handoffs.get(session_id)
+        if not control:
+            raise ValueError("No active manual takeover exists for this session")
+        if control.handoff_kind != "manual":
+            raise ValueError("This browser window is a sign-in handoff, not a takeover")
+        if (
+            cleaned_outcome == "resume"
+            and control.checkpoint_kind not in MANUAL_RESUME_KINDS
+        ):
+            raise ValueError("This unsupported site cannot resume automatically")
+        if control.action:
+            raise ValueError("A manual takeover decision has already been received")
+        control.action = cleaned_outcome
         control.event.set()
     _set_session_state(
         session_id,
         "handoff_closing",
-        "Sign-in cancellation received. Closing the browser window.",
+        "Manual takeover outcome received. Inspecting the browser page.",
         active_task_id=control.task_id,
     )
     return get_session(session_id) or {}
+
+
+def cancel_manual_takeover(session_id: int) -> dict[str, Any]:
+    return _cancel_handoff(session_id, "manual")
 
 
 def clear_session(session_id: int) -> dict[str, Any]:
@@ -584,7 +1041,7 @@ def recover_interrupted_handoffs() -> None:
             """,
             (
                 "The local service restarted while this browser session was active. "
-                "Start the application or sign-in handoff again.",
+                "Start the application or browser handoff again.",
                 now_iso(),
             ),
         )

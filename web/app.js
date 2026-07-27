@@ -600,11 +600,16 @@ function renderBrowserTask(task) {
   const checkpoint = task.checkpoint || {};
   const fields = checkpoint.fields || [];
   const session = task.browser_session || {};
-  const handoffActive = [
-    "handoff_opening",
-    "awaiting_user",
-    "handoff_closing"
-  ].includes(session.status);
+  const takeoverKinds = [
+    "captcha",
+    "unsupported_site",
+    "unsupported_form",
+    "submit_control",
+    "step_limit"
+  ];
+  const takeoverResumeKinds = takeoverKinds.filter((kind) => kind !== "unsupported_site");
+  const handoffOwned = Number(session.active_task_id || 0) === Number(task.id);
+  const manualTakeover = takeoverKinds.includes(task.checkpoint_kind);
   const latestScreenshot = (task.screenshots || []).at(-1);
   const screenshotUrl = latestScreenshot
     ? `/api/applications/task-artifact?task_id=${encodeURIComponent(task.id)}&name=${encodeURIComponent(latestScreenshot)}`
@@ -661,20 +666,39 @@ function renderBrowserTask(task) {
         ${task.status === "checkpoint" && canContinue
           ? `<button data-action="task-resolve" data-task="${task.id}">Save answers and continue</button>`
           : ""}
-        ${task.status === "checkpoint" && task.checkpoint_kind === "login" && !handoffActive
+        ${task.status === "checkpoint" && task.checkpoint_kind === "login"
+          && !session.active
           ? `<button data-action="task-login-start" data-task="${task.id}">Open sign-in window</button>`
           : ""}
-        ${task.status === "checkpoint" && task.checkpoint_kind === "login" && session.status === "awaiting_user"
+        ${task.status === "checkpoint" && task.checkpoint_kind === "login"
+          && handoffOwned && session.status === "awaiting_user"
           ? `<button data-action="task-login-complete" data-session="${session.id}">Sign-in complete</button>`
           : ""}
         ${task.status === "checkpoint" && task.checkpoint_kind === "login"
-          && ["handoff_opening", "awaiting_user"].includes(session.status)
+          && handoffOwned && ["handoff_opening", "awaiting_user"].includes(session.status)
           ? `<button data-action="task-login-cancel" data-session="${session.id}" class="secondary">Cancel sign-in</button>`
           : ""}
-        ${task.status === "checkpoint" && checkpoint.target_url && task.checkpoint_kind !== "login"
+        ${task.status === "checkpoint" && manualTakeover && !session.active
+          ? `<button data-action="task-takeover-start" data-task="${task.id}">Open manual browser</button>`
+          : ""}
+        ${task.status === "checkpoint" && manualTakeover && handoffOwned
+          && session.status === "awaiting_user"
+          && takeoverResumeKinds.includes(task.checkpoint_kind)
+          ? `<button data-action="task-takeover-resume" data-session="${session.id}">Manual step complete</button>`
+          : ""}
+        ${task.status === "checkpoint" && manualTakeover && handoffOwned
+          && session.status === "awaiting_user"
+          ? `<button data-action="task-takeover-submitted" data-session="${session.id}" class="warn">I submitted manually</button>`
+          : ""}
+        ${task.status === "checkpoint" && manualTakeover && handoffOwned
+          && ["handoff_opening", "awaiting_user"].includes(session.status)
+          ? `<button data-action="task-takeover-cancel" data-session="${session.id}" class="secondary">Cancel takeover</button>`
+          : ""}
+        ${task.status === "checkpoint" && checkpoint.target_url
+          && task.checkpoint_kind !== "login" && !manualTakeover
           ? `<a class="button-link secondary" href="${escapeHtml(checkpoint.target_url)}" target="_blank" rel="noreferrer">Open application</a>`
           : ""}
-        ${["queued", "checkpoint"].includes(task.status) && !handoffActive
+        ${["queued", "checkpoint"].includes(task.status) && !session.active
           ? `<button data-action="task-cancel" data-task="${task.id}" class="secondary">Cancel task</button>`
           : ""}
       </div>
@@ -1100,6 +1124,9 @@ async function handleAction(action, button) {
         })
       });
       toast(`Decision recorded: ${formatMode(result.item.resolution)}.`);
+      if (["sign_in", "manual_takeover"].includes(button.dataset.resolution)) {
+        setView("applications");
+      }
     } else if (action === "readiness-open") {
       setView(button.dataset.view);
     } else if (action === "document-update") {
@@ -1227,6 +1254,37 @@ async function handleAction(action, button) {
         body: JSON.stringify({ browser_session_id: Number(button.dataset.session) })
       });
       toast(result.message || "Sign-in cancelled.");
+    } else if (action === "task-takeover-start") {
+      const result = await api("/api/browser-sessions/takeover/start", {
+        method: "POST",
+        body: JSON.stringify({ task_id: Number(button.dataset.task) })
+      });
+      toast(result.message || "Manual browser opened.");
+    } else if (action === "task-takeover-resume") {
+      const result = await api("/api/browser-sessions/takeover/complete", {
+        method: "POST",
+        body: JSON.stringify({
+          browser_session_id: Number(button.dataset.session),
+          outcome: "resume"
+        })
+      });
+      toast(result.message || "Manual step completion received.");
+    } else if (action === "task-takeover-submitted") {
+      if (!window.confirm("Confirm only after the employer site shows that the application was submitted.")) return;
+      const result = await api("/api/browser-sessions/takeover/complete", {
+        method: "POST",
+        body: JSON.stringify({
+          browser_session_id: Number(button.dataset.session),
+          outcome: "submitted"
+        })
+      });
+      toast(result.message || "Manual submission verification started.");
+    } else if (action === "task-takeover-cancel") {
+      const result = await api("/api/browser-sessions/takeover/cancel", {
+        method: "POST",
+        body: JSON.stringify({ browser_session_id: Number(button.dataset.session) })
+      });
+      toast(result.message || "Manual takeover cancelled.");
     } else if (action === "browser-session-clear") {
       if (!window.confirm("Clear local cookies and site data for this ATS session?")) return;
       const result = await api("/api/browser-sessions/clear", {

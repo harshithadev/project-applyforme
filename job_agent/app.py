@@ -193,6 +193,23 @@ class Handler(SimpleHTTPRequestHandler):
                         int(payload["browser_session_id"])
                     )
                 )
+            elif path == "/api/browser-sessions/takeover/start":
+                self.json(
+                    browser_sessions.start_manual_takeover(int(payload["task_id"]))
+                )
+            elif path == "/api/browser-sessions/takeover/complete":
+                self.json(
+                    browser_sessions.complete_manual_takeover(
+                        int(payload["browser_session_id"]),
+                        str(payload["outcome"]),
+                    )
+                )
+            elif path == "/api/browser-sessions/takeover/cancel":
+                self.json(
+                    browser_sessions.cancel_manual_takeover(
+                        int(payload["browser_session_id"])
+                    )
+                )
             elif path == "/api/browser-sessions/clear":
                 self.json(
                     browser_sessions.clear_session(

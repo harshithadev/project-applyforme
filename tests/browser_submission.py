@@ -17,7 +17,35 @@ class ATSFixture(BaseHTTPRequestHandler):
     submitted_paths: list[str] = []
 
     def do_GET(self) -> None:
-        if self.path.startswith("/ashby/apply"):
+        if self.path.startswith("/manual-confirmed"):
+            body = (
+                b"<!doctype html><html><body><h1>Thank you</h1>"
+                b"<p>Your application was submitted.</p></body></html>"
+            )
+        elif self.path.startswith("/manual-submit"):
+            body = b"""<!doctype html><html><body>
+            <div class="captcha">Human-only submission control</div>
+            <button id="manual-submit" onclick="window.location.href='/manual-confirmed'">
+              Submit manually
+            </button>
+            </body></html>"""
+        elif self.path.startswith("/manual-captcha"):
+            if "manual_clear=ready" in self.headers.get("Cookie", ""):
+                body = self.form(
+                    """
+                    <label for="name">Full name</label>
+                    <input id="name" name="name" required>
+                    """
+                )
+            else:
+                body = b"""<!doctype html><html><body>
+                <div class="captcha">Human verification required</div>
+                <button id="manual-clear" onclick="
+                  document.cookie='manual_clear=ready; Max-Age=3600; Path=/';
+                  window.location.href='/manual-captcha?ats=workday&amp;cleared=1';
+                ">Complete human verification</button>
+                </body></html>"""
+        elif self.path.startswith("/ashby/apply"):
             body = self.form(
                 """
                 <label for="name">Name</label>
@@ -263,6 +291,14 @@ def main() -> None:
             assert automation._adapter_name(url) == adapter
 
         with fixture_server() as base_url:
+            assert browser_sessions._resume_url_allowed(
+                f"{base_url}/manual-captcha",
+                f"{base_url}/manual-captcha?cleared=1",
+            )
+            assert not browser_sessions._resume_url_allowed(
+                f"{base_url}/manual-captcha",
+                "https://different.example.test/application",
+            )
             greenhouse_app = draft_for_url(
                 applications,
                 jobs,
@@ -387,6 +423,64 @@ def main() -> None:
             assert login_submitted and login_submitted["status"] == "submitted", login_submitted
             assert login_submitted["browser_session"]["status"] == "ready"
 
+            captcha_app = draft_for_url(
+                applications,
+                jobs,
+                "Manual CAPTCHA Engineer",
+                f"{base_url}/manual-captcha?ats=workday",
+            )
+            automation.apply_application(int(captcha_app["id"]))
+            captcha_task = automation.process_next_task()
+            assert captcha_task and captcha_task["checkpoint_kind"] == "captcha"
+
+            def clear_captcha(page: object) -> str:
+                page.locator("#manual-clear").click()
+                page.wait_for_url("**/manual-captcha?ats=workday&cleared=1")
+                return "resume"
+
+            captcha_session = browser_sessions._run_manual_takeover_for_test(
+                int(captcha_task["id"]),
+                clear_captcha,
+            )
+            assert captcha_session["status"] == "ready", captcha_session
+            captcha_resumed = automation.get_task(int(captcha_task["id"]))
+            assert captcha_resumed and captcha_resumed["status"] == "queued"
+            assert "cleared=1" in captcha_resumed["resume_url"]
+            captcha_submitted = automation.process_next_task()
+            assert captcha_submitted and captcha_submitted["status"] == "submitted"
+
+            manual_app = draft_for_url(
+                applications,
+                jobs,
+                "Manual Submission Engineer",
+                f"{base_url}/manual-submit?ats=workday",
+            )
+            automation.apply_application(int(manual_app["id"]))
+            manual_task = automation.process_next_task()
+            assert manual_task and manual_task["checkpoint_kind"] == "captcha"
+            rejected_submission = browser_sessions._run_manual_takeover_for_test(
+                int(manual_task["id"]),
+                lambda _page: "submitted",
+            )
+            assert rejected_submission["status"] == "ready"
+            manual_still_paused = automation.get_task(int(manual_task["id"]))
+            assert manual_still_paused and manual_still_paused["status"] == "checkpoint"
+            assert "not recorded" in manual_still_paused["message"]
+
+            def submit_manually(page: object) -> str:
+                page.locator("#manual-submit").click()
+                page.wait_for_url("**/manual-confirmed")
+                return "submitted"
+
+            completed_submission = browser_sessions._run_manual_takeover_for_test(
+                int(manual_task["id"]),
+                submit_manually,
+            )
+            assert completed_submission["status"] == "ready"
+            manual_submitted = automation.get_task(int(manual_task["id"]))
+            assert manual_submitted and manual_submitted["status"] == "submitted"
+            assert manual_submitted["result"]["manual_takeover"] is True
+
             profile_dirs = [path for path in BROWSER_SESSIONS_DIR.iterdir() if path.is_dir()]
             assert profile_dirs
             preferences = [
@@ -404,7 +498,7 @@ def main() -> None:
             assert cleared["status"] == "cleared"
             assert not cleared["profile_present"]
 
-        assert ATSFixture.submitted_paths == ["/thanks"] * 6
+        assert ATSFixture.submitted_paths == ["/thanks"] * 7
 
     print("browser submission ok")
 

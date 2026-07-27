@@ -29,6 +29,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Resume upload, plain-English task events, screenshots, and resumable question checkpoints.
 - CAPTCHA, login, sensitive-question, unknown-field, final-review, and uncertain-submission stops.
 - Per-ATS local Chromium sessions with guided manual login handoff and dashboard clearing controls.
+- Guided persistent-browser takeover for CAPTCHA, unsupported forms or controls, and bounded step-limit checkpoints.
 - Contact-specific outreach revisions, explicit approval, retry controls, and SMTP daily limits.
 - Bounded public company-page contact discovery with role ranking, source provenance, and verification gates.
 - Plain-English activity log.
@@ -37,7 +38,8 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 
 - Browser submission supports Greenhouse, Lever, Ashby, SmartRecruiters, and public Workday manual-application flows; other application systems stop at a manual checkpoint.
 - Workday applications that require an account stop at a login checkpoint and open a visible, user-controlled sign-in handoff.
-- CAPTCHA challenges are never bypassed, and login-required forms remain paused until manual sign-in is explicitly confirmed.
+- CAPTCHA challenges are never bypassed automatically. A user can open the saved ATS session, complete the human-only step, and explicitly return control.
+- Manual submission is recorded only after the user selects that outcome and the browser page shows confirmation text without a remaining final-submit control.
 - Review and assisted modes always stop before the final submit action. Rules-autonomous final submission requires the separate **Final browser submission** setting.
 - Sensitive saved answers pause for confirmation unless explicitly enabled in settings.
 - PDF compilation reports a clear blocked state when no supported local TeX engine is available.
@@ -115,6 +117,8 @@ npm run test:readiness
 Supported ATS tasks reuse one Chromium profile per adapter and hostname. When a site requires an account, the task pauses and the **Open sign-in window** action launches that exact local profile in a visible browser. ApplyForMe does not request, read, or persist credential field values. After **Sign-in complete**, the handoff verifies that the visible page is no longer a password form, closes the browser, and re-queues the paused task.
 
 Profiles are stored under `data/browser-sessions/` in owner-only directories. Chromium password saving and profile autofill are disabled; cookies and site session data remain in the Chromium profile. The **Browser Sessions** panel reports current use and provides an explicit **Clear** action that removes the profile data. Service restarts mark active handoffs interrupted instead of assuming login succeeded.
+
+CAPTCHA, unsupported-form, unsupported-control, and step-limit checkpoints expose **Open manual browser**. **Manual step complete** captures the current page URL, closes the visible window, and re-queues the worker from that page in a separate Chromium launch. **I submitted manually** never clicks submit; it records the application only when the page contains a recognizable confirmation and no final-submit control remains. Unsupported ATS sites can be completed manually but cannot be returned to automatic form handling.
 
 ## Source documents
 
@@ -202,7 +206,7 @@ Run the durable pipeline and guarded end-to-end transition test with:
 npm run test:pipeline
 ```
 
-Run the persistent task lifecycle, real local Chromium adapter, saved-session, login-handoff, and profile-clearing tests with:
+Run the persistent task lifecycle, real local Chromium adapter, saved-session, login-handoff, manual-takeover, guarded manual-submission, and profile-clearing tests with:
 
 ```bash
 npm run test:applications

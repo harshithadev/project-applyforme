@@ -160,6 +160,12 @@ def main() -> None:
             "SELECT answer FROM answer_rules WHERE question = ?",
             ("Why are you interested?",),
         )["answer"] == "The role matches my platform work."
+        assert {
+            item["id"] for item in approvals._browser_actions("captcha")
+        } == {"manual_takeover", "cancel"}
+        assert {
+            item["id"] for item in approvals._browser_actions("login")
+        } == {"sign_in", "cancel"}
 
         DOCS_DIR.mkdir(parents=True, exist_ok=True)
         document_path = DOCS_DIR / "new-evidence.txt"

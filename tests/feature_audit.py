@@ -20,7 +20,28 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 class CareerFixture(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        if self.path.startswith("/ats/greenhouse"):
+        if self.path.startswith("/ats/manual"):
+            if "audit_manual=ready" in self.headers.get("Cookie", ""):
+                body = b"""<!doctype html><html><body>
+                <form action="/thanks" method="post" enctype="multipart/form-data">
+                  <label for="first_name">First name</label>
+                  <input id="first_name" name="first_name" required>
+                  <label for="last_name">Last name</label>
+                  <input id="last_name" name="last_name" required>
+                  <label for="resume">Resume / CV</label>
+                  <input id="resume" name="resume" type="file" accept=".pdf" required>
+                  <button type="submit">Submit application</button>
+                </form>
+                </body></html>"""
+            else:
+                body = b"""<!doctype html><html><body>
+                <div class="captcha">Human verification required</div>
+                <button id="manual-clear" onclick="
+                  document.cookie='audit_manual=ready; Max-Age=3600; Path=/';
+                  window.location.href='/ats/manual?ats=greenhouse&amp;cleared=1';
+                ">Complete human verification</button>
+                </body></html>"""
+        elif self.path.startswith("/ats/greenhouse"):
             body = b"""<!doctype html><html><body>
             <form action="/thanks" method="post" enctype="multipart/form-data">
               <label for="first_name">First name</label>
@@ -201,6 +222,7 @@ def main() -> None:
             app,
             applications,
             automation,
+            browser_sessions,
             contact_discovery,
             emailer,
             job_sources,
@@ -778,14 +800,66 @@ def main() -> None:
                     and review_task.get("checkpoint_kind") == "final_review"
                     and review_task.get("screenshots")
                 )
+                set_setting("mode", "rules_autonomous")
+                set_setting("browser_submit_enabled", "true")
+                manual_job_id = jobs.add_manual_job(
+                    {
+                        "title": "Manual Takeover Engineer",
+                        "company": "Local ATS Fixture",
+                        "url": f"{ats_url}/ats/manual?ats=greenhouse",
+                        "description": "Build reliable browser automation with explicit human checkpoints.",
+                    }
+                )
+                manual_app = applications.draft_application(manual_job_id)
+                applications.approve_application(int(manual_app["id"]))
+                automation.apply_application(int(manual_app["id"]))
+                manual_checkpoint = automation.process_next_task()
+
+                def clear_manual_checkpoint(page: object) -> str:
+                    page.locator("#manual-clear").click()
+                    page.wait_for_url("**/ats/manual?ats=greenhouse&cleared=1")
+                    return "resume"
+
+                manual_session = browser_sessions._run_manual_takeover_for_test(
+                    int(manual_checkpoint["id"]),
+                    clear_manual_checkpoint,
+                )
+                manual_resumed = automation.get_task(int(manual_checkpoint["id"]))
+                takeover_ready = bool(
+                    manual_checkpoint.get("checkpoint_kind") == "captcha"
+                    and manual_session.get("status") == "ready"
+                    and manual_resumed
+                    and manual_resumed.get("status") == "queued"
+                    and "cleared=1" in str(manual_resumed.get("resume_url") or "")
+                )
                 automation.resolve_checkpoint(int(review_task["id"]), approve_submit=True)
                 automation.start_worker()
                 deadline = time.monotonic() + 20
                 completed_task = automation.get_task(int(review_task["id"]))
-                while completed_task and completed_task["status"] in {"queued", "running"} and time.monotonic() < deadline:
+                completed_manual = automation.get_task(int(manual_checkpoint["id"]))
+                while (
+                    (
+                        completed_task
+                        and completed_task["status"] in {"queued", "running"}
+                    )
+                    or (
+                        completed_manual
+                        and completed_manual["status"] in {"queued", "running"}
+                    )
+                ) and time.monotonic() < deadline:
                     time.sleep(0.1)
                     completed_task = automation.get_task(int(review_task["id"]))
+                    completed_manual = automation.get_task(int(manual_checkpoint["id"]))
             worker_completed = bool(completed_task and completed_task["status"] == "submitted")
+            takeover_completed = bool(
+                takeover_ready
+                and completed_manual
+                and completed_manual["status"] == "submitted"
+                and any(
+                    event["step"] == "manual_takeover"
+                    for event in completed_manual.get("events", [])
+                )
+            )
             session_persisted = bool(
                 completed_task
                 and completed_task.get("browser_session")
@@ -814,10 +888,18 @@ def main() -> None:
                 if session_persisted
                 else f"Browser session result: {completed_task.get('browser_session') if completed_task else None}",
             )
+            record(
+                "PASS" if takeover_completed else "FAIL",
+                "Guided manual browser takeover",
+                "A CAPTCHA checkpoint resumed from a human-completed persistent browser page and finished in a separate worker launch."
+                if takeover_completed
+                else f"Takeover result: ready={takeover_ready}, task={completed_manual}",
+            )
         except Exception as exc:
             record("FAIL", "Playwright browser submission", f"Local ATS integration failed: {exc}")
             record("FAIL", "Background application worker", f"Worker integration failed: {exc}")
             record("FAIL", "Persistent ATS browser sessions", f"Session integration failed: {exc}")
+            record("FAIL", "Guided manual browser takeover", f"Takeover integration failed: {exc}")
 
         set_setting("pipeline_enabled", "true")
         set_setting("pipeline_min_score", "100")

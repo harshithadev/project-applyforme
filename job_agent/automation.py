@@ -783,7 +783,8 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
             raise
         try:
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto(str(task["target_url"]), wait_until="domcontentloaded", timeout=45_000)
+            navigation_url = str(task.get("resume_url") or task["target_url"])
+            page.goto(navigation_url, wait_until="domcontentloaded", timeout=45_000)
             _save_screenshot(page, task, "01-opened")
             if _page_has_captcha(page):
                 return _checkpoint(
@@ -972,7 +973,7 @@ def process_next_task(
                     UPDATE application_tasks
                     SET status = 'submitted', current_step = 'submitted', message = ?,
                         result_json = ?, checkpoint_kind = '', checkpoint_json = '{}',
-                        completed_at = ?, updated_at = ?
+                        resume_url = '', completed_at = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -1146,6 +1147,90 @@ def resume_login_tasks(session_id: int) -> list[int]:
     return task_ids
 
 
+def resume_manual_task(
+    task_id: int,
+    resume_url: str,
+    screenshot: str = "",
+) -> dict[str, Any]:
+    task = row("SELECT * FROM application_tasks WHERE id = ?", (task_id,))
+    if not task:
+        raise ValueError("Browser application task does not exist")
+    if task["status"] != "checkpoint":
+        raise ValueError("Only a checkpointed browser task can resume after takeover")
+    now = now_iso()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE application_tasks
+            SET status = 'queued', current_step = 'queued', message = ?,
+                resume_url = ?, checkpoint_kind = '', checkpoint_json = '{}',
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                "Manual browser step completed. Automation re-queued from the captured page.",
+                resume_url,
+                now,
+                task_id,
+            ),
+        )
+    _record_task_event(
+        task_id,
+        "queued",
+        "Manual browser step completed. Automation re-queued from the captured page.",
+        meta={"resume_url": resume_url, "screenshot": screenshot},
+    )
+    _worker_event.set()
+    return get_task(task_id) or {}
+
+
+def complete_manual_submission(
+    task_id: int,
+    confirmation_url: str,
+    screenshot: str,
+) -> dict[str, Any]:
+    task = row("SELECT * FROM application_tasks WHERE id = ?", (task_id,))
+    if not task:
+        raise ValueError("Browser application task does not exist")
+    if task["status"] != "checkpoint":
+        raise ValueError("Only a checkpointed browser task can be completed manually")
+    from .applications import mark_application_submitted
+
+    mark_application_submitted(int(task["application_id"]))
+    now = now_iso()
+    message = "Manual submission was confirmed in the takeover browser."
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE application_tasks
+            SET status = 'submitted', current_step = 'submitted', message = ?,
+                result_json = ?, checkpoint_kind = '', checkpoint_json = '{}',
+                resume_url = '', completed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                message,
+                json.dumps(
+                    {
+                        "confirmation_url": confirmation_url,
+                        "screenshot": screenshot,
+                        "manual_takeover": True,
+                    }
+                ),
+                now,
+                now,
+                task_id,
+            ),
+        )
+    _record_task_event(
+        task_id,
+        "submitted",
+        message,
+        meta={"confirmation_url": confirmation_url, "screenshot": screenshot},
+    )
+    return get_task(task_id) or {}
+
+
 def cancel_task(task_id: int) -> dict[str, Any]:
     task = row("SELECT * FROM application_tasks WHERE id = ?", (task_id,))
     if not task:
@@ -1155,7 +1240,7 @@ def cancel_task(task_id: int) -> dict[str, Any]:
     session_id = int(task.get("browser_session_id") or 0)
     session = browser_sessions.get_session(session_id) if session_id else None
     if session and session["active"]:
-        raise ValueError("Cancel the active sign-in handoff before cancelling this task")
+        raise ValueError("Cancel the active browser handoff before cancelling this task")
     with connect() as conn:
         cursor = conn.execute(
             """

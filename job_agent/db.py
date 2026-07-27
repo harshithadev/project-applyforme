@@ -217,6 +217,7 @@ def init_db() -> None:
               browser_session_id INTEGER,
               adapter TEXT NOT NULL DEFAULT '',
               target_url TEXT NOT NULL,
+              resume_url TEXT NOT NULL DEFAULT '',
               mode TEXT NOT NULL,
               status TEXT NOT NULL DEFAULT 'queued',
               current_step TEXT NOT NULL DEFAULT 'queued',
@@ -500,6 +501,10 @@ def init_db() -> None:
             item["name"]
             for item in conn.execute("PRAGMA table_info(application_tasks)").fetchall()
         }
+        if "resume_url" not in application_task_columns:
+            conn.execute(
+                "ALTER TABLE application_tasks ADD COLUMN resume_url TEXT NOT NULL DEFAULT ''"
+            )
         if "browser_session_id" not in application_task_columns:
             conn.execute(
                 "ALTER TABLE application_tasks ADD COLUMN browser_session_id INTEGER"

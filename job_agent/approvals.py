@@ -8,7 +8,14 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from . import applications, automation, documents, orchestration, outreach
+from . import (
+    applications,
+    automation,
+    browser_sessions,
+    documents,
+    orchestration,
+    outreach,
+)
 from .db import connect, log, now_iso, row, rows, setting
 
 
@@ -123,6 +130,10 @@ def _browser_actions(kind: str) -> list[dict[str, str]]:
             ),
             cancel,
         ]
+    if kind == "login":
+        return [_action("sign_in", "Open sign-in window"), cancel]
+    if kind in browser_sessions.MANUAL_TAKEOVER_KINDS:
+        return [_action("manual_takeover", "Open manual browser"), cancel]
     return [cancel]
 
 
@@ -667,6 +678,12 @@ def _dispatch(
             _dismiss_outreach(source_id)
             return {"status": "cancelled"}
     elif source_type == "browser_task":
+        if action == "sign_in":
+            result = browser_sessions.start_login_handoff(source_id)
+            return {"status": result["status"]}
+        if action == "manual_takeover":
+            result = browser_sessions.start_manual_takeover(source_id)
+            return {"status": result["status"]}
         if action == "continue":
             answers = _required_answers(item, payload)
             result = automation.resolve_checkpoint(
