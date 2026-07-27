@@ -18,6 +18,10 @@
         </div>
         <nav>
           <button class="nav-item active" data-view="overview">Overview</button>
+          <button class="nav-item nav-item-counted" data-view="setup">
+            <span>Setup</span>
+            <strong id="readinessNavBadge" class="nav-count">0%</strong>
+          </button>
           <button class="nav-item" data-view="documents">Documents</button>
           <button class="nav-item" data-view="jobs">Jobs</button>
           <button class="nav-item" data-view="pipeline">Pipeline</button>
@@ -92,6 +96,106 @@
               <span>Structured from your source documents</span>
             </div>
             <div id="structuredProfile" class="profile-grid"></div>
+          </section>
+        </section>
+
+        <section id="setup" class="view">
+          <div class="metric-grid setup-metrics">
+            <div class="metric"><span>Readiness</span><strong id="readinessScore">0%</strong></div>
+            <div class="metric"><span>Required</span><strong id="readinessRequired">0/0</strong></div>
+            <div class="metric"><span>Blocking</span><strong id="readinessBlocking">0</strong></div>
+            <div class="metric"><span>Setup</span><strong id="readinessCompletion">Open</strong></div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Operating Readiness</h3>
+                <span id="readinessEvaluatedAt"></span>
+              </div>
+              <div class="card-actions setup-head-actions">
+                <button id="readinessRunBtn" class="secondary">Run preflight</button>
+                <button id="readinessCompleteBtn">Complete setup</button>
+              </div>
+            </div>
+            <div id="readinessModes" class="readiness-modes"></div>
+            <div id="readinessChecks" class="readiness-checks"></div>
+          </section>
+
+          <div class="panel-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Operating Policy</h3>
+              </div>
+              <form id="setupPolicyForm" class="form-grid compact">
+                <label>Automation mode
+                  <select name="mode">
+                    <option value="review">Review</option>
+                    <option value="assisted_autonomous">Assisted autonomous</option>
+                    <option value="rules_autonomous">Rules autonomous</option>
+                  </select>
+                </label>
+                <label>Application pipeline
+                  <select name="pipeline_enabled">
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </label>
+                <label>Minimum score
+                  <input name="pipeline_min_score" type="number" min="0" max="100" />
+                </label>
+                <label>Daily application limit
+                  <input name="daily_application_limit" type="number" min="1" max="200" />
+                </label>
+                <label>Career URLs
+                  <textarea name="career_urls"></textarea>
+                </label>
+                <label>Role keywords
+                  <textarea name="role_keywords"></textarea>
+                </label>
+                <label>Locations
+                  <textarea name="locations"></textarea>
+                </label>
+                <label>Validated-material approval
+                  <select name="pipeline_auto_approve">
+                    <option value="false">Require approval</option>
+                    <option value="true">Approve by rules</option>
+                  </select>
+                </label>
+                <label>Browser queue after approval
+                  <select name="pipeline_auto_apply">
+                    <option value="true">Queue automatically</option>
+                    <option value="false">Queue manually</option>
+                  </select>
+                </label>
+                <label>Final browser submission
+                  <select name="browser_submit_enabled">
+                    <option value="false">Require approval</option>
+                    <option value="true">Submit by rules</option>
+                  </select>
+                </label>
+                <button type="submit">Save operating policy</button>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Connections</h3>
+              </div>
+              <div id="readinessConnections" class="connection-list"></div>
+              <div class="card-actions">
+                <button id="readinessCodexBtn" class="secondary">Test Codex</button>
+                <button id="readinessEmailBtn" class="secondary">Verify email login</button>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Preflight History</h3>
+              <span>Persisted readiness snapshots</span>
+            </div>
+            <div id="readinessHistory" class="timeline"></div>
           </section>
         </section>
 

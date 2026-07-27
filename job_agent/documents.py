@@ -482,7 +482,7 @@ def start_watcher() -> None:
                     _watcher_state["last_checked_at"] = now_iso()
                     if current != signature:
                         result = profile.ingest_docs()
-                        signature = _folder_signature()
+                        signature = current
                         _watcher_state["last_changed_at"] = now_iso()
                         _watcher_state["last_result"] = result
                         _watcher_state["last_error"] = ""

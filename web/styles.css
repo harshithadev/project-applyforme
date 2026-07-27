@@ -730,6 +730,102 @@ main {
   margin-top: 12px;
 }
 
+.setup-metrics {
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+}
+
+.setup-head-actions {
+  margin-top: 0;
+}
+
+.readiness-modes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.readiness-mode {
+  min-height: 128px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.readiness-mode.ready {
+  border-color: #9fc9b7;
+  background: #f3faf7;
+}
+
+.readiness-mode.blocked {
+  border-color: #dfc590;
+  background: #fffbf2;
+}
+
+.readiness-mode p,
+.readiness-check p,
+.connection-row p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.readiness-checks,
+.connection-list {
+  display: grid;
+}
+
+.readiness-check {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.readiness-check:first-child {
+  border-top: 0;
+}
+
+.readiness-check-state {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.readiness-check.pass .readiness-check-state {
+  background: #2e7d5b;
+}
+
+.readiness-check.warning .readiness-check-state {
+  background: #b47a15;
+}
+
+.readiness-check.blocked .readiness-check-state {
+  background: var(--danger);
+}
+
+.connection-row {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.connection-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
 .event.error {
   border-color: #e2b8b8;
   background: #fff8f8;
@@ -1247,9 +1343,11 @@ textarea {
   .metric-grid,
   .approval-metrics,
   .document-metrics,
+  .setup-metrics,
   .pipeline-summary,
   .panel-grid,
   .profile-grid,
+  .readiness-modes,
   .form-grid,
   .writing-grid,
   .document-edit,
@@ -1272,9 +1370,19 @@ textarea {
   .pipeline-event,
   .approval-heading,
   .document-row-head,
+  .connection-row,
   .service-details > div:first-child {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .readiness-check {
+    grid-template-columns: 10px minmax(0, 1fr);
+  }
+
+  .readiness-check button {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .delivery-meta {

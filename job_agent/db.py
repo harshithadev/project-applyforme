@@ -360,6 +360,14 @@ def init_db() -> None:
               FOREIGN KEY(approval_item_id) REFERENCES approval_items(id)
             );
 
+            CREATE TABLE IF NOT EXISTS readiness_runs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              status TEXT NOT NULL,
+              score INTEGER NOT NULL,
+              snapshot_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               level TEXT NOT NULL DEFAULT 'info',
@@ -520,6 +528,10 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status "
             "ON notification_deliveries(status, created_at)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_readiness_runs_created "
+            "ON readiness_runs(created_at DESC)"
+        )
         defaults = {
             "mode": "review",
             "role_keywords": "software engineer, developer, full stack",
@@ -546,6 +558,10 @@ def init_db() -> None:
             "notification_quiet_end": "08:00",
             "document_review_mode": "false",
             "document_scan_interval_seconds": "15",
+            "setup_completed_at": "",
+            "smtp_verified_at": "",
+            "smtp_verification_status": "",
+            "smtp_verification_message": "",
         }
         for key, value in defaults.items():
             conn.execute(

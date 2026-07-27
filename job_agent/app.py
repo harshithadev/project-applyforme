@@ -21,6 +21,7 @@ from . import (
     orchestration,
     outreach,
     profile,
+    readiness,
     service,
     writing,
 )
@@ -70,6 +71,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "service": service.status(),
                     "approvals": approvals.inbox_state(),
                     "document_inbox": documents.watcher_status(),
+                    "readiness": readiness.readiness_state(),
                 }
             )
             return
@@ -144,6 +146,14 @@ class Handler(SimpleHTTPRequestHandler):
                 )
             elif path == "/api/notifications/test":
                 self.json(approvals.send_test_notification())
+            elif path == "/api/readiness/run":
+                self.json(readiness.run_preflight())
+            elif path == "/api/readiness/complete":
+                self.json(readiness.complete_setup())
+            elif path == "/api/readiness/test-codex":
+                self.json(readiness.test_codex_connection())
+            elif path == "/api/readiness/test-email":
+                self.json(readiness.test_email_connection())
             elif path == "/api/applications/draft":
                 self.json(applications.draft_application(int(payload["job_id"]), payload.get("mode")))
             elif path == "/api/applications/approve":

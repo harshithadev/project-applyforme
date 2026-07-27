@@ -16,6 +16,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - A durable score-gated pipeline from discovery through tailoring, review, and guarded browser automation.
 - Per-job pipeline history, retries, skips, daily intake limits, and crash recovery.
 - A per-user macOS login service with restart controls and local stdout/stderr logs.
+- A persisted setup preflight that gates tailoring, review automation, outreach, and rules-autonomous modes.
 - Tailored LaTeX resume generation with validated PDF output for each job.
 - Dashboard PDF preview, LaTeX download, recompile controls, and compiler diagnostics.
 - Evidence-grounded writing versions for resume content, cover letters, statements, and outreach.
@@ -85,6 +86,27 @@ Service output is stored in `data/logs/launch-agent.out.log` and `data/logs/laun
 
 ```bash
 chmod 600 .env
+```
+
+## Setup and readiness
+
+The **Setup** view evaluates the running system instead of relying on a static onboarding checklist. It checks the login service, ChatGPT-authenticated Codex session, LaTeX compiler, approved evidence, job discovery input, Playwright, document watcher, OCR, SMTP verification, pipeline policy, and autonomous safety switches.
+
+Readiness is reported separately for:
+
+- Tailored documents
+- Review automation
+- Verified outreach
+- Rules-autonomous operation
+
+Each explicit **Run preflight** action stores a timestamped snapshot in SQLite. **Complete setup** remains blocked until review automation has approved evidence, a job source or saved job, and every required local capability. Later configuration changes can lower current readiness without deleting the historical completion record.
+
+The email connection test performs TLS and login only. It does not send a message, store SMTP credentials, or expose secrets through the dashboard. SMTP credentials continue to come from the ignored `.env` file or process environment.
+
+Run the blocked-to-ready transitions, SMTP login-only verification, persisted history, completion guard, and autonomous safety-switch test with:
+
+```bash
+npm run test:readiness
 ```
 
 ## Source documents

@@ -98,6 +98,7 @@ function render() {
     : data.service?.installed ? "Stopped" : "Not installed";
   $("#emailBadge").textContent = data.email?.configured ? formatMode(data.email.mode) : "Not configured";
   $("#approvalNavCount").textContent = Number(data.approvals?.summary?.pending || 0);
+  $("#readinessNavBadge").textContent = `${Number(data.readiness?.score || 0)}%`;
   $("#docCount").textContent = data.profile.documents.length;
   $("#jobCount").textContent = data.jobs.length;
   $("#pipelineCount").textContent = Number(data.pipeline?.total || 0);
@@ -117,6 +118,7 @@ function render() {
   renderSourceStates(data.job_source_states || []);
   renderPipeline(data.pipeline || {});
   renderApprovals(data.approvals || {});
+  renderReadiness(data.readiness || {});
   renderApplications(data.applications, data.application_tasks || []);
   renderOutreach(
     data.outreach || [],
@@ -516,6 +518,75 @@ function renderApprovals(inbox) {
         </div>
       `).join("")
     : `<div class="empty">No inbox decisions have been recorded yet.</div>`;
+}
+
+function renderReadiness(readiness) {
+  const checks = readiness.checks || [];
+  const modes = readiness.modes || [];
+  const summary = readiness.summary || {};
+  const checkMap = new Map(checks.map((check) => [check.id, check]));
+  $("#readinessScore").textContent = `${Number(readiness.score || 0)}%`;
+  $("#readinessRequired").textContent = `${Number(summary.required_passed || 0)}/${Number(summary.required_total || 0)}`;
+  $("#readinessBlocking").textContent = (summary.blocking || []).length;
+  $("#readinessCompletion").textContent = readiness.setup_completed_at ? "Complete" : "Open";
+  $("#readinessEvaluatedAt").textContent = readiness.evaluated_at
+    ? `Evaluated ${readiness.evaluated_at}`
+    : "";
+  const reviewMode = modes.find((mode) => mode.id === "review_automation");
+  $("#readinessCompleteBtn").disabled = !reviewMode?.ready || Boolean(readiness.setup_completed_at);
+
+  $("#readinessModes").innerHTML = modes.map((mode) => `
+    <div class="readiness-mode ${mode.ready ? "ready" : "blocked"}">
+      <div>
+        <strong>${escapeHtml(mode.title)}</strong>
+        <p>${escapeHtml(mode.message)}</p>
+      </div>
+      <span class="status">${mode.ready ? "ready" : `${(mode.missing || []).length} blocked`}</span>
+    </div>
+  `).join("");
+
+  $("#readinessChecks").innerHTML = checks.map((check) => `
+    <div class="readiness-check ${escapeHtml(check.status)}">
+      <div class="readiness-check-state" aria-hidden="true"></div>
+      <div>
+        <strong>${escapeHtml(check.title)}</strong>
+        <p>${escapeHtml(check.message)}</p>
+      </div>
+      <button
+        class="secondary"
+        data-action="readiness-open"
+        data-view="${escapeHtml(check.view)}"
+      >Open</button>
+    </div>
+  `).join("");
+
+  const codex = checkMap.get("codex") || {};
+  const email = checkMap.get("email") || {};
+  $("#readinessConnections").innerHTML = [codex, email].map((check) => `
+    <div class="connection-row">
+      <div>
+        <strong>${escapeHtml(check.title || "Connection")}</strong>
+        <p>${escapeHtml(check.message || "Status unavailable.")}</p>
+      </div>
+      <span class="status">${escapeHtml(check.status || "unknown")}</span>
+    </div>
+  `).join("");
+  $("#readinessEmailBtn").disabled = !Boolean(email.detail?.configured);
+
+  const history = readiness.history || [];
+  $("#readinessHistory").innerHTML = history.length
+    ? history.map((run) => `
+        <div class="event">
+          <div>
+            <strong>${Number(run.score || 0)}% · ${escapeHtml(run.status)}</strong>
+            <p>${(run.blocking || []).length
+              ? `Blocked: ${escapeHtml((run.blocking || []).join(", "))}`
+              : "All review-automation checks passed."}</p>
+          </div>
+          <span>${escapeHtml(run.created_at)}</span>
+        </div>
+      `).join("")
+    : `<div class="empty">No explicit preflight runs recorded.</div>`;
 }
 
 function renderBrowserTask(task) {
@@ -920,10 +991,12 @@ function renderService(service) {
 }
 
 function populateSettings(settings) {
-  const form = $("#settingsForm");
-  for (const [key, value] of Object.entries(settings)) {
-    const field = form.elements[key];
-    if (field) field.value = value;
+  for (const selector of ["#settingsForm", "#setupPolicyForm"]) {
+    const form = $(selector);
+    for (const [key, value] of Object.entries(settings)) {
+      const field = form.elements[key];
+      if (field) field.value = value;
+    }
   }
 }
 
@@ -933,6 +1006,7 @@ function setView(view) {
   $$(".nav-item").forEach((el) => el.classList.toggle("active", el.dataset.view === view));
   const titles = {
     overview: ["Overview", "Track documents, jobs, applications, and agent actions."],
+    setup: ["Setup", "Verify local capabilities and choose a guarded operating policy."],
     documents: ["Documents", "Manage source files, extraction review, OCR, and profile evidence."],
     jobs: ["Jobs", "Add postings, scan configured career pages, and draft packages."],
     pipeline: ["Pipeline", "Track automatic preparation, review, and guarded browser work."],
@@ -967,6 +1041,8 @@ async function handleAction(action, button) {
         })
       });
       toast(`Decision recorded: ${formatMode(result.item.resolution)}.`);
+    } else if (action === "readiness-open") {
+      setView(button.dataset.view);
     } else if (action === "document-update") {
       const item = button.closest(".document-row");
       const result = await api("/api/documents/update", {
@@ -1160,6 +1236,68 @@ function bindEvents() {
 
   $("#refreshBtn").addEventListener("click", loadState);
 
+  $("#readinessRunBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api("/api/readiness/run", { method: "POST", body: "{}" });
+      toast(`Preflight complete: ${Number(result.score || 0)}% ready.`);
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("#readinessCompleteBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await api("/api/readiness/complete", { method: "POST", body: "{}" });
+      toast("Readiness setup completed.");
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("#readinessCodexBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api("/api/readiness/test-codex", {
+        method: "POST",
+        body: "{}"
+      });
+      toast(result.message || "Codex connection verified.");
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("#readinessEmailBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api("/api/readiness/test-email", {
+        method: "POST",
+        body: "{}"
+      });
+      toast(result.message || "Email login verified.");
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   $("#documentPickerBtn").addEventListener("click", () => $("#documentFileInput").click());
 
   $("#documentFileInput").addEventListener("change", async (event) => {
@@ -1306,6 +1444,14 @@ function bindEvents() {
     const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
     await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
     toast("Settings saved.");
+    await loadState();
+  });
+
+  $("#setupPolicyForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+    await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
+    toast("Operating policy saved.");
     await loadState();
   });
 

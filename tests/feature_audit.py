@@ -578,6 +578,10 @@ def main() -> None:
                 if approval_item
                 else {}
             )
+            readiness_run = request_json(
+                f"{dashboard_url}/api/readiness/run",
+                {},
+            )
             compiled = request_json(
                 f"{dashboard_url}/api/applications/compile",
                 {"application_id": int(app_record["id"])},
@@ -594,6 +598,7 @@ def main() -> None:
             and state.get("service")
             and state.get("approvals")
             and state.get("document_inbox")
+            and state.get("readiness")
             and created.get("id")
             and api_application.get("id")
             and api_contact.get("id")
@@ -618,8 +623,20 @@ def main() -> None:
                 f"service={bool(state.get('service'))}, "
                 f"approvals={bool(state.get('approvals'))}, "
                 f"documents={bool(state.get('document_inbox'))}, "
+                f"readiness={bool(state.get('readiness'))}, "
                 f"created_id={created.get('id')}",
             )
+        readiness_ok = bool(
+            readiness_run.get("run_id")
+            and readiness_run.get("checks")
+            and len(readiness_run.get("modes", [])) == 4
+            and readiness_run.get("history")
+        )
+        record(
+            "PASS" if readiness_ok else "FAIL",
+            "Setup and readiness preflight",
+            "Persisted preflight checks gate tailoring, review automation, outreach, and rules-autonomous modes.",
+        )
         document_inbox_ok = bool(
             uploaded_document.get("saved") == 1
             and uploaded_body.startswith(b"Web upload evidence")
