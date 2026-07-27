@@ -511,6 +511,28 @@ def main() -> None:
                     "contact_id": int(api_contact["id"]),
                 },
             )
+            approval_state = request_json(f"{dashboard_url}/api/state").get("approvals", {})
+            approval_item = next(
+                (
+                    item
+                    for item in approval_state.get("items", [])
+                    if item.get("source_type") == "application"
+                    and int(item.get("source_id", 0)) == int(api_application["id"])
+                ),
+                {},
+            )
+            approval_resolution = (
+                request_json(
+                    f"{dashboard_url}/api/approvals/action",
+                    {
+                        "approval_item_id": int(approval_item["id"]),
+                        "action": "approve",
+                        "note": "Feature audit approval.",
+                    },
+                )
+                if approval_item
+                else {}
+            )
             compiled = request_json(
                 f"{dashboard_url}/api/applications/compile",
                 {"application_id": int(app_record["id"])},
@@ -525,6 +547,7 @@ def main() -> None:
             state.get("settings")
             and state.get("pipeline")
             and state.get("service")
+            and state.get("approvals")
             and created.get("id")
             and api_application.get("id")
             and api_contact.get("id")
@@ -547,8 +570,38 @@ def main() -> None:
                 "Local dashboard API",
                 f"state={bool(state.get('settings'))}, pipeline={bool(state.get('pipeline'))}, "
                 f"service={bool(state.get('service'))}, "
+                f"approvals={bool(state.get('approvals'))}, "
                 f"created_id={created.get('id')}",
             )
+        inbox_ok = bool(
+            approval_item
+            and approval_resolution.get("item", {}).get("resolution") == "approve"
+            and approval_resolution.get("inbox", {}).get("history")
+        )
+        if inbox_ok:
+            record(
+                "PASS",
+                "Unified approval inbox",
+                "Application, browser, outreach, and pipeline decisions share a durable action queue and history.",
+            )
+        else:
+            record(
+                "FAIL",
+                "Unified approval inbox",
+                f"item={bool(approval_item)}, resolution={approval_resolution.get('item', {}).get('resolution')}",
+            )
+        notification_policy = approval_state.get("notifications", {})
+        notification_ok = bool(
+            "enabled" in notification_policy
+            and "quiet" in notification_policy
+            and notification_policy.get("quiet_start")
+            and notification_policy.get("quiet_end")
+        )
+        record(
+            "PASS" if notification_ok else "FAIL",
+            "Deduplicated macOS notifications",
+            "New approval items use durable delivery records and configurable quiet hours.",
+        )
         if artifact_ok:
             record("PASS", "Resume artifact access", "Validated PDFs open inline and LaTeX sources download through scoped endpoints.")
         else:

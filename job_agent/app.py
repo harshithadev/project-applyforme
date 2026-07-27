@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import (
+    approvals,
     applications,
     automation,
     contact_discovery,
@@ -64,6 +65,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "codex": writing.codex_status(),
                     "email": outreach.status(),
                     "service": service.status(),
+                    "approvals": approvals.inbox_state(),
                 }
             )
             return
@@ -103,6 +105,17 @@ class Handler(SimpleHTTPRequestHandler):
                     daemon=True,
                     name="applyforme-service-restart",
                 ).start()
+            elif path == "/api/approvals/action":
+                self.json(
+                    approvals.resolve_item(
+                        int(payload["approval_item_id"]),
+                        str(payload["action"]),
+                        payload.get("payload", {}),
+                        str(payload.get("note", "")),
+                    )
+                )
+            elif path == "/api/notifications/test":
+                self.json(approvals.send_test_notification())
             elif path == "/api/applications/draft":
                 self.json(applications.draft_application(int(payload["job_id"]), payload.get("mode")))
             elif path == "/api/applications/approve":
@@ -279,6 +292,7 @@ def main() -> None:
     outreach.start_worker()
     automation.start_worker()
     orchestration.start_worker()
+    approvals.start_worker()
     WEB_DIR.mkdir(parents=True, exist_ok=True)
     host = "127.0.0.1"
     port = 8787

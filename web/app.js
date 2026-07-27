@@ -77,6 +77,7 @@ function render() {
     ? "Running"
     : data.service?.installed ? "Stopped" : "Not installed";
   $("#emailBadge").textContent = data.email?.configured ? formatMode(data.email.mode) : "Not configured";
+  $("#approvalNavCount").textContent = Number(data.approvals?.summary?.pending || 0);
   $("#docCount").textContent = data.profile.documents.length;
   $("#jobCount").textContent = data.jobs.length;
   $("#pipelineCount").textContent = Number(data.pipeline?.total || 0);
@@ -94,6 +95,7 @@ function render() {
   renderJobs(data.jobs);
   renderSourceStates(data.job_source_states || []);
   renderPipeline(data.pipeline || {});
+  renderApprovals(data.approvals || {});
   renderApplications(data.applications, data.application_tasks || []);
   renderOutreach(
     data.outreach || [],
@@ -308,6 +310,104 @@ function renderPipeline(pipeline) {
       </article>
     `;
   }).join("");
+}
+
+function renderApprovals(inbox) {
+  const items = inbox.items || [];
+  const history = inbox.history || [];
+  const summary = inbox.summary || {};
+  const notifications = inbox.notifications || {};
+  $("#approvalPendingCount").textContent = Number(summary.pending || 0);
+  $("#approvalUrgentCount").textContent = Number(summary.urgent || 0);
+  $("#approvalDecisionCount").textContent = history.length;
+  $("#notificationState").textContent = !notifications.enabled
+    ? "Disabled"
+    : notifications.quiet ? "Quiet hours" : notifications.supported ? "Active" : "Unsupported";
+  $("#notificationTestBtn").disabled = !notifications.enabled || !notifications.supported;
+
+  const target = $("#approvalList");
+  if (!items.length) {
+    target.innerHTML = `<div class="empty">No decisions are waiting. Background work will appear here when it needs review.</div>`;
+  } else {
+    target.innerHTML = items.map((item) => {
+      const payload = item.payload || {};
+      const fields = payload.fields || [];
+      const answerFields = fields.map((field, index) => {
+        const question = field.question || `Required field ${index + 1}`;
+        const options = (field.options || []).filter(Boolean);
+        const control = options.length
+          ? `<select data-approval-answer data-question="${escapeHtml(question)}">
+              <option value="">Choose an answer</option>
+              ${options.map((option) => `<option value="${escapeHtml(option)}" ${option === field.suggested_answer ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+            </select>`
+          : `<input data-approval-answer data-question="${escapeHtml(question)}" value="${escapeHtml(field.suggested_answer || "")}" />`;
+        return `<label>${escapeHtml(question)}${control}</label>`;
+      }).join("");
+      const actions = (item.actions || []).map((candidate) => {
+        const style = candidate.style === "secondary"
+          ? "secondary"
+          : candidate.style === "warning" ? "warn" : "";
+        return `
+          <button
+            class="${style}"
+            data-action="approval-resolve"
+            data-approval="${Number(item.id)}"
+            data-resolution="${escapeHtml(candidate.id)}"
+            data-confirm="${escapeHtml(candidate.confirmation || "")}"
+          >${escapeHtml(candidate.label)}</button>
+        `;
+      }).join("");
+      const artifactLink = payload.resume_url
+        ? `<a class="button-link secondary" href="${escapeHtml(payload.resume_url)}" target="_blank" rel="noreferrer">Open tailored resume</a>`
+        : "";
+      const screenshot = payload.screenshot_url
+        ? `<a class="approval-screenshot" href="${escapeHtml(payload.screenshot_url)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(payload.screenshot_url)}" alt="Browser checkpoint screenshot" /></a>`
+        : "";
+      const targetLink = payload.target_url
+        ? `<a class="button-link secondary" href="${escapeHtml(payload.target_url)}" target="_blank" rel="noreferrer">Open application</a>`
+        : "";
+      const outreachPreview = payload.subject || payload.body
+        ? `<details class="approval-preview">
+            <summary>Message preview</summary>
+            <strong>${escapeHtml(payload.subject || "")}</strong>
+            <pre>${escapeHtml(payload.body || "")}</pre>
+          </details>`
+        : "";
+      return `
+        <article class="approval-row priority-${Number(item.priority || 0) >= 90 ? "urgent" : "normal"}">
+          <div class="approval-heading">
+            <div>
+              <span class="approval-kind">${escapeHtml(formatMode(item.kind))}</span>
+              <h4>${escapeHtml(item.title)}</h4>
+            </div>
+            <span class="status">${Number(item.priority || 0) >= 90 ? "urgent" : "pending"}</span>
+          </div>
+          <p>${escapeHtml(item.summary)}</p>
+          ${screenshot}
+          ${answerFields ? `<div class="approval-fields">${answerFields}</div>` : ""}
+          ${outreachPreview}
+          <label class="approval-note">Decision note
+            <input data-approval-note placeholder="Optional" />
+          </label>
+          <div class="card-actions">${artifactLink}${targetLink}${actions}</div>
+          <p class="meta">Created ${escapeHtml(item.created_at)}</p>
+        </article>
+      `;
+    }).join("");
+  }
+
+  const historyTarget = $("#approvalHistory");
+  historyTarget.innerHTML = history.length
+    ? history.map((decision) => `
+        <div class="event">
+          <div>
+            <strong>${escapeHtml(decision.title)}</strong>
+            <p>${escapeHtml(formatMode(decision.action))}${decision.note ? ` · ${escapeHtml(decision.note)}` : ""}</p>
+          </div>
+          <span>${escapeHtml(decision.created_at)}</span>
+        </div>
+      `).join("")
+    : `<div class="empty">No inbox decisions have been recorded yet.</div>`;
 }
 
 function renderBrowserTask(task) {
@@ -727,6 +827,7 @@ function setView(view) {
     overview: ["Overview", "Track documents, jobs, applications, and agent actions."],
     jobs: ["Jobs", "Add postings, scan configured career pages, and draft packages."],
     pipeline: ["Pipeline", "Track automatic preparation, review, and guarded browser work."],
+    approvals: ["Approvals", "Review packages, browser checkpoints, outreach, and failures in one queue."],
     applications: ["Applications", "Approve, submit, or queue browser automation."],
     outreach: ["Outreach", "Review contacts, approve messages, and track delivery."],
     settings: ["Settings", "Tune modes, limits, target companies, and source URLs."],
@@ -739,7 +840,25 @@ function setView(view) {
 async function handleAction(action, button) {
   button.disabled = true;
   try {
-    if (action === "draft") {
+    if (action === "approval-resolve") {
+      const confirmation = button.dataset.confirm;
+      if (confirmation && !window.confirm(confirmation)) return;
+      const item = button.closest(".approval-row");
+      const answers = {};
+      item.querySelectorAll("[data-approval-answer]").forEach((field) => {
+        if (field.value.trim()) answers[field.dataset.question] = field.value.trim();
+      });
+      const result = await api("/api/approvals/action", {
+        method: "POST",
+        body: JSON.stringify({
+          approval_item_id: Number(button.dataset.approval),
+          action: button.dataset.resolution,
+          note: item.querySelector("[data-approval-note]")?.value || "",
+          payload: { answers, save_rules: true }
+        })
+      });
+      toast(`Decision recorded: ${formatMode(result.item.resolution)}.`);
+    } else if (action === "draft") {
       await api("/api/applications/draft", {
         method: "POST",
         body: JSON.stringify({ job_id: Number(button.dataset.job) })
@@ -925,6 +1044,19 @@ function bindEvents() {
       setTimeout(() => loadState().catch(() => {}), 4000);
     } catch (error) {
       toast(error.message);
+      button.disabled = false;
+    }
+  });
+
+  $("#notificationTestBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api("/api/notifications/test", { method: "POST", body: "{}" });
+      toast(result.message || "Test notification sent.");
+    } catch (error) {
+      toast(error.message);
+    } finally {
       button.disabled = false;
     }
   });

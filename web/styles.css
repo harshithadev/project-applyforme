@@ -135,6 +135,25 @@ nav {
   padding: 10px 12px;
 }
 
+.nav-item-counted {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nav-count {
+  min-width: 24px;
+  min-height: 20px;
+  display: inline-grid;
+  place-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #f2c078;
+  color: #1f2933;
+  font-size: 11px;
+}
+
 .nav-item.active,
 .nav-item:hover {
   background: rgba(255, 255, 255, 0.1);
@@ -500,6 +519,105 @@ main {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.approval-metrics {
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+}
+
+.approval-list {
+  display: grid;
+}
+
+.approval-row {
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+}
+
+.approval-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.approval-row.priority-urgent {
+  border-left: 3px solid var(--accent-2);
+  padding-left: 14px;
+}
+
+.approval-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.approval-heading h4 {
+  margin: 3px 0 0;
+  font-size: 16px;
+}
+
+.approval-kind {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.approval-row > p {
+  margin: 8px 0;
+}
+
+.approval-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.approval-note {
+  max-width: 520px;
+  margin-top: 12px;
+}
+
+.approval-screenshot {
+  display: block;
+  width: min(100%, 640px);
+  margin: 12px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.approval-screenshot img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+  object-position: top;
+}
+
+.approval-preview {
+  margin: 12px 0;
+  padding: 10px 0;
+  border-block: 1px solid var(--line);
+}
+
+.approval-preview summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.approval-preview strong {
+  display: block;
+  margin-top: 10px;
+}
+
+.approval-preview pre {
+  max-height: 240px;
+  overflow: auto;
+  color: var(--ink);
+  font-family: inherit;
+  white-space: pre-wrap;
 }
 
 .event.error {
@@ -1017,11 +1135,13 @@ textarea {
   }
 
   .metric-grid,
+  .approval-metrics,
   .pipeline-summary,
   .panel-grid,
   .profile-grid,
   .form-grid,
   .writing-grid,
+  .approval-fields,
   .checkpoint-fields,
   .settings-grid {
     grid-template-columns: 1fr;
@@ -1038,6 +1158,7 @@ textarea {
 
   .pipeline-heading,
   .pipeline-event,
+  .approval-heading,
   .service-details > div:first-child {
     align-items: stretch;
     flex-direction: column;

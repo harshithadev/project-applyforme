@@ -19,6 +19,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Evidence-grounded writing versions for resume content, cover letters, statements, and outreach.
 - A local Codex writing queue that uses saved ChatGPT authentication instead of an OpenAI API key.
 - Application package tracking with review, approval, and submitted states.
+- A unified approval inbox with immutable decisions and deduplicated macOS notifications.
 - Saved answer rules for repeated application-form questions.
 - Persistent background browser tasks with Greenhouse, Lever, Ashby, SmartRecruiters, and Workday application adapters.
 - Guarded multi-step form advancement for SmartRecruiters, Workday, and compatible Ashby flows.
@@ -114,6 +115,20 @@ Enable the pipeline under **Settings > Application pipeline**. New jobs at or ab
 With automatic Codex tailoring enabled, the pipeline queues grounded resume, cover-letter, statement, and outreach generation through the ChatGPT-authenticated Codex CLI. It then validates the evidence references and compiles the LaTeX resume. Review mode waits for approval before browser automation. Assisted-autonomous mode can fill forms but still stops at final review. Rules-autonomous approval and final browser submission each require their own explicit settings.
 
 Blocked and failed items remain paused until **Retry** is selected. Skipping an item cancels queued writing and browser work when it can be stopped safely; running or uncertain submissions must be resolved first.
+
+## Approval inbox
+
+The **Approvals** view combines tailored-package review, browser checkpoints, outreach drafts, and failed or blocked pipeline work. Every item is tied to the exact writing version, outreach revision, or task checkpoint that produced it. If the source changes, the old item is closed instead of being reused for newer content.
+
+Actions delegate to the same guarded workflows used in the detailed views. Unknown and sensitive form questions require complete answers, final submission has a separate confirmation, and uncertain submissions must be verified before they can be marked submitted. Optional decision notes and action results remain in SQLite.
+
+Native macOS notifications are enabled by default and sent once per inbox item. Configure quiet hours or disable notifications under **Settings**. Use **Test notification** in the Approval Inbox to verify local notification delivery.
+
+Run the inbox, decision-history, answer-validation, notification-deduplication, and quiet-hours test with:
+
+```bash
+npm run test:approvals
+```
 
 ## Codex writer
 

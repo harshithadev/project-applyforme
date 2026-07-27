@@ -308,6 +308,52 @@ def init_db() -> None:
               FOREIGN KEY(thread_id) REFERENCES outreach_threads(id)
             );
 
+            CREATE TABLE IF NOT EXISTS approval_items (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              dedupe_key TEXT NOT NULL UNIQUE,
+              kind TEXT NOT NULL,
+              source_type TEXT NOT NULL,
+              source_id INTEGER NOT NULL,
+              application_id INTEGER,
+              priority INTEGER NOT NULL DEFAULT 50,
+              title TEXT NOT NULL,
+              summary TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              actions_json TEXT NOT NULL DEFAULT '[]',
+              payload_json TEXT NOT NULL DEFAULT '{}',
+              source_updated_at TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              resolved_at TEXT NOT NULL DEFAULT '',
+              resolution TEXT NOT NULL DEFAULT '',
+              FOREIGN KEY(application_id) REFERENCES applications(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS approval_decisions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              approval_item_id INTEGER NOT NULL,
+              action TEXT NOT NULL,
+              note TEXT NOT NULL DEFAULT '',
+              payload_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(approval_item_id) REFERENCES approval_items(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS notification_deliveries (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              approval_item_id INTEGER NOT NULL,
+              dedupe_key TEXT NOT NULL UNIQUE,
+              channel TEXT NOT NULL DEFAULT 'macos',
+              status TEXT NOT NULL DEFAULT 'queued',
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              message TEXT NOT NULL DEFAULT '',
+              last_error TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              sent_at TEXT NOT NULL DEFAULT '',
+              FOREIGN KEY(approval_item_id) REFERENCES approval_items(id)
+            );
+
             CREATE TABLE IF NOT EXISTS events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               level TEXT NOT NULL DEFAULT 'info',
@@ -428,6 +474,18 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_outreach_threads_status "
             "ON outreach_threads(status, queued_at, id)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approval_items_status "
+            "ON approval_items(status, priority DESC, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approval_decisions_item "
+            "ON approval_decisions(approval_item_id, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status "
+            "ON notification_deliveries(status, created_at)"
+        )
         defaults = {
             "mode": "review",
             "role_keywords": "software engineer, developer, full stack",
@@ -449,6 +507,9 @@ def init_db() -> None:
             "pipeline_auto_write": "true",
             "pipeline_auto_approve": "false",
             "pipeline_auto_apply": "true",
+            "notifications_enabled": "true",
+            "notification_quiet_start": "22:00",
+            "notification_quiet_end": "08:00",
         }
         for key, value in defaults.items():
             conn.execute(
