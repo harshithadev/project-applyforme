@@ -120,6 +120,10 @@ function render() {
   renderApprovals(data.approvals || {});
   renderReadiness(data.readiness || {});
   renderApplications(data.applications, data.application_tasks || []);
+  renderBrowserSessions(
+    data.browser_sessions || [],
+    data.automation?.sessions || {}
+  );
   renderOutreach(
     data.outreach || [],
     data.contacts || [],
@@ -133,11 +137,12 @@ function render() {
     data.applications,
     data.outreach || [],
     data.application_tasks || [],
-    data.pipeline || {}
+    data.pipeline || {},
+    data.browser_sessions || []
   );
 }
 
-function scheduleBackgroundRefresh(applications, outreach, applicationTasks, pipeline) {
+function scheduleBackgroundRefresh(applications, outreach, applicationTasks, pipeline, browserSessions) {
   clearTimeout(state.workerPoll);
   const writingActive = applications.some((app) => ["queued", "running"].includes(app.writing?.task?.status));
   const outreachActive = outreach.some((thread) => ["queued", "sending"].includes(thread.status));
@@ -145,7 +150,8 @@ function scheduleBackgroundRefresh(applications, outreach, applicationTasks, pip
   const pipelineActive = (pipeline.items || []).some((item) =>
     ["queued", "running", "writing", "approved", "applying"].includes(item.status)
   );
-  const active = writingActive || outreachActive || browserActive || pipelineActive;
+  const sessionActive = browserSessions.some((session) => session.active);
+  const active = writingActive || outreachActive || browserActive || pipelineActive || sessionActive;
   state.workerPoll = active ? setTimeout(() => loadState().catch((error) => toast(error.message)), 3000) : null;
 }
 
@@ -593,6 +599,12 @@ function renderBrowserTask(task) {
   if (!task) return "";
   const checkpoint = task.checkpoint || {};
   const fields = checkpoint.fields || [];
+  const session = task.browser_session || {};
+  const handoffActive = [
+    "handoff_opening",
+    "awaiting_user",
+    "handoff_closing"
+  ].includes(session.status);
   const latestScreenshot = (task.screenshots || []).at(-1);
   const screenshotUrl = latestScreenshot
     ? `/api/applications/task-artifact?task_id=${encodeURIComponent(task.id)}&name=${encodeURIComponent(latestScreenshot)}`
@@ -634,6 +646,12 @@ function renderBrowserTask(task) {
         <span class="status">${escapeHtml(task.status)}</span>
       </div>
       <p>${escapeHtml(task.message)}</p>
+      ${session.id ? `
+        <div class="browser-session-inline">
+          <span>${escapeHtml(session.hostname || "ATS session")}</span>
+          <strong>${escapeHtml(formatMode(session.status || "new"))}</strong>
+        </div>
+      ` : ""}
       ${screenshotUrl ? `<a class="task-screenshot" href="${screenshotUrl}" target="_blank" rel="noreferrer"><img src="${screenshotUrl}" alt="Latest browser task screenshot" /></a>` : ""}
       ${answerFields ? `<div class="checkpoint-fields">${answerFields}</div>` : ""}
       <div class="card-actions">
@@ -643,10 +661,20 @@ function renderBrowserTask(task) {
         ${task.status === "checkpoint" && canContinue
           ? `<button data-action="task-resolve" data-task="${task.id}">Save answers and continue</button>`
           : ""}
-        ${task.status === "checkpoint" && checkpoint.target_url
+        ${task.status === "checkpoint" && task.checkpoint_kind === "login" && !handoffActive
+          ? `<button data-action="task-login-start" data-task="${task.id}">Open sign-in window</button>`
+          : ""}
+        ${task.status === "checkpoint" && task.checkpoint_kind === "login" && session.status === "awaiting_user"
+          ? `<button data-action="task-login-complete" data-session="${session.id}">Sign-in complete</button>`
+          : ""}
+        ${task.status === "checkpoint" && task.checkpoint_kind === "login"
+          && ["handoff_opening", "awaiting_user"].includes(session.status)
+          ? `<button data-action="task-login-cancel" data-session="${session.id}" class="secondary">Cancel sign-in</button>`
+          : ""}
+        ${task.status === "checkpoint" && checkpoint.target_url && task.checkpoint_kind !== "login"
           ? `<a class="button-link secondary" href="${escapeHtml(checkpoint.target_url)}" target="_blank" rel="noreferrer">Open application</a>`
           : ""}
-        ${["queued", "checkpoint"].includes(task.status)
+        ${["queued", "checkpoint"].includes(task.status) && !handoffActive
           ? `<button data-action="task-cancel" data-task="${task.id}" class="secondary">Cancel task</button>`
           : ""}
       </div>
@@ -656,6 +684,37 @@ function renderBrowserTask(task) {
       </details>
     </section>
   `;
+}
+
+function renderBrowserSessions(sessions, summary) {
+  $("#browserSessionMeta").textContent = `${Number(summary.ready || 0)} ready · ${Number(summary.active || 0)} active`;
+  $("#browserSessionList").innerHTML = sessions.length
+    ? sessions.map((session) => `
+        <div class="browser-session-row">
+          <div>
+            <div class="browser-session-heading">
+              <strong>${escapeHtml(formatMode(session.adapter || "ATS"))}</strong>
+              <span class="status">${escapeHtml(formatMode(session.status || "new"))}</span>
+            </div>
+            <p>${escapeHtml(session.hostname || "Unknown host")}</p>
+            <span>${escapeHtml(session.message || "Session status unavailable.")}</span>
+          </div>
+          <div class="browser-session-actions">
+            <span>${session.last_verified_at
+              ? `Verified ${escapeHtml(session.last_verified_at)}`
+              : session.last_used_at
+                ? `Used ${escapeHtml(session.last_used_at)}`
+                : "Not verified"}</span>
+            <button
+              class="secondary"
+              data-action="browser-session-clear"
+              data-session="${session.id}"
+              ${session.can_clear ? "" : "disabled"}
+            >Clear</button>
+          </div>
+        </div>
+      `).join("")
+    : `<div class="empty">No ATS browser sessions have been created.</div>`;
 }
 
 function renderApplications(apps, tasks) {
@@ -1150,6 +1209,31 @@ async function handleAction(action, button) {
         })
       });
       toast(result.message || "Final submission approved.");
+    } else if (action === "task-login-start") {
+      const result = await api("/api/browser-sessions/login/start", {
+        method: "POST",
+        body: JSON.stringify({ task_id: Number(button.dataset.task) })
+      });
+      toast(result.message || "Sign-in window opened.");
+    } else if (action === "task-login-complete") {
+      const result = await api("/api/browser-sessions/login/complete", {
+        method: "POST",
+        body: JSON.stringify({ browser_session_id: Number(button.dataset.session) })
+      });
+      toast(result.message || "Sign-in completion received.");
+    } else if (action === "task-login-cancel") {
+      const result = await api("/api/browser-sessions/login/cancel", {
+        method: "POST",
+        body: JSON.stringify({ browser_session_id: Number(button.dataset.session) })
+      });
+      toast(result.message || "Sign-in cancelled.");
+    } else if (action === "browser-session-clear") {
+      if (!window.confirm("Clear local cookies and site data for this ATS session?")) return;
+      const result = await api("/api/browser-sessions/clear", {
+        method: "POST",
+        body: JSON.stringify({ browser_session_id: Number(button.dataset.session) })
+      });
+      toast(result.message || "Browser session cleared.");
     } else if (action === "task-cancel") {
       if (!window.confirm("Cancel this browser application task?")) return;
       await api("/api/applications/task/cancel", {

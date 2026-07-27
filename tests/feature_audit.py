@@ -599,6 +599,7 @@ def main() -> None:
             and state.get("approvals")
             and state.get("document_inbox")
             and state.get("readiness")
+            and "browser_sessions" in state
             and created.get("id")
             and api_application.get("id")
             and api_contact.get("id")
@@ -624,6 +625,7 @@ def main() -> None:
                 f"approvals={bool(state.get('approvals'))}, "
                 f"documents={bool(state.get('document_inbox'))}, "
                 f"readiness={bool(state.get('readiness'))}, "
+                f"browser_sessions={'browser_sessions' in state}, "
                 f"created_id={created.get('id')}",
             )
         readiness_ok = bool(
@@ -784,6 +786,13 @@ def main() -> None:
                     time.sleep(0.1)
                     completed_task = automation.get_task(int(review_task["id"]))
             worker_completed = bool(completed_task and completed_task["status"] == "submitted")
+            session_persisted = bool(
+                completed_task
+                and completed_task.get("browser_session")
+                and completed_task["browser_session"].get("status") == "ready"
+                and completed_task["browser_session"].get("profile_present")
+                and completed_task["browser_session"].get("last_used_at")
+            )
             record(
                 "PASS" if review_ready and worker_completed else "FAIL",
                 "Playwright browser submission",
@@ -798,9 +807,17 @@ def main() -> None:
                 if worker_completed
                 else f"Worker result: {completed_task}",
             )
+            record(
+                "PASS" if session_persisted else "FAIL",
+                "Persistent ATS browser sessions",
+                "A restricted local Chromium profile persisted across review and submission browser launches."
+                if session_persisted
+                else f"Browser session result: {completed_task.get('browser_session') if completed_task else None}",
+            )
         except Exception as exc:
             record("FAIL", "Playwright browser submission", f"Local ATS integration failed: {exc}")
             record("FAIL", "Background application worker", f"Worker integration failed: {exc}")
+            record("FAIL", "Persistent ATS browser sessions", f"Session integration failed: {exc}")
 
         set_setting("pipeline_enabled", "true")
         set_setting("pipeline_min_score", "100")

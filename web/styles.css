@@ -826,6 +826,60 @@ main {
   border-top: 0;
 }
 
+.browser-session-list {
+  display: grid;
+}
+
+.browser-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.browser-session-row:first-child {
+  border-top: 0;
+}
+
+.browser-session-row p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.browser-session-row > div > span,
+.browser-session-actions > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.browser-session-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.browser-session-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  text-align: right;
+}
+
+.browser-session-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f7f9fa;
+  font-size: 12px;
+}
+
 .event.error {
   border-color: #e2b8b8;
   background: #fff8f8;
@@ -1371,6 +1425,7 @@ textarea {
   .approval-heading,
   .document-row-head,
   .connection-row,
+  .browser-session-row,
   .service-details > div:first-child {
     align-items: stretch;
     flex-direction: column;
@@ -1387,6 +1442,11 @@ textarea {
 
   .delivery-meta {
     flex-direction: column;
+  }
+
+  .browser-session-actions {
+    justify-content: space-between;
+    text-align: left;
   }
 
   .contact-row {

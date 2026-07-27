@@ -55,13 +55,24 @@ class ATSFixture(BaseHTTPRequestHandler):
             <a href="/smartrecruiters/step1?ats=smartrecruiters">I'm interested</a>
             </body></html>"""
         elif self.path.startswith("/workday-login"):
-            body = b"""<!doctype html><html><body>
-            <h1>Sign In</h1>
-            <label for="username">Email</label>
-            <input id="username" type="email">
-            <label for="password">Password</label>
-            <input id="password" type="password">
-            </body></html>"""
+            if "ats_session=ready" in self.headers.get("Cookie", ""):
+                body = self.form(
+                    """
+                    <label for="name">Full name</label>
+                    <input id="name" name="name" required>
+                    """
+                )
+            else:
+                body = b"""<!doctype html><html><body>
+                <h1>Sign In</h1>
+                <form action="/workday-auth" method="post">
+                  <label for="username">Email</label>
+                  <input id="username" name="username" type="email">
+                  <label for="password">Password</label>
+                  <input id="password" name="password" type="password">
+                  <button type="submit">Sign in</button>
+                </form>
+                </body></html>"""
         elif self.path.startswith("/workday/choice"):
             body = b"""<!doctype html><html><body>
             <a data-automation-id="applyManually" href="/workday/step1?ats=workday">Apply Manually</a>
@@ -115,6 +126,15 @@ class ATSFixture(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0") or "0")
         self.rfile.read(length)
+        if self.path == "/workday-auth":
+            self.send_response(303)
+            self.send_header(
+                "Set-Cookie",
+                "ats_session=ready; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax",
+            )
+            self.send_header("Location", "/workday-login?ats=workday")
+            self.end_headers()
+            return
         type(self).submitted_paths.append(self.path)
         self.respond(
             b"<!doctype html><html><body><h1>Thank you</h1>"
@@ -217,8 +237,8 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["APPLYFORME_ROOT"] = tmp
 
-        from job_agent import applications, automation, jobs, profile
-        from job_agent.config import DOCS_DIR
+        from job_agent import applications, automation, browser_sessions, jobs, profile
+        from job_agent.config import BROWSER_SESSIONS_DIR, DOCS_DIR
         from job_agent.db import init_db, row, set_setting
 
         init_db()
@@ -340,15 +360,51 @@ def main() -> None:
             assert login_task["adapter"] == "workday"
             login_result = automation.process_next_task()
             assert login_result and login_result["checkpoint_kind"] == "login", login_result
-            try:
-                automation.resolve_checkpoint(int(login_result["id"]))
-            except ValueError as exc:
-                assert "manually" in str(exc)
-            else:
-                raise AssertionError("Login checkpoint was incorrectly re-queued")
-            automation.cancel_task(int(login_result["id"]))
 
-        assert ATSFixture.submitted_paths == ["/thanks"] * 5
+            rejected_session = browser_sessions._run_login_handoff_for_test(
+                int(login_result["id"]),
+                lambda _page: None,
+            )
+            assert rejected_session["status"] == "needs_login", rejected_session
+            still_paused = automation.get_task(int(login_result["id"]))
+            assert still_paused and still_paused["checkpoint_kind"] == "login"
+
+            def sign_in(page: object) -> None:
+                page.locator("#username").fill("alex@example.test")
+                page.locator("#password").fill("fixture-password")
+                page.get_by_role("button", name="Sign in").click()
+                page.wait_for_url("**/workday-login?ats=workday")
+
+            saved_session = browser_sessions._run_login_handoff_for_test(
+                int(login_result["id"]),
+                sign_in,
+            )
+            assert saved_session["status"] == "ready", saved_session
+            assert saved_session["last_verified_at"]
+            resumed = automation.get_task(int(login_result["id"]))
+            assert resumed and resumed["status"] == "queued", resumed
+            login_submitted = automation.process_next_task()
+            assert login_submitted and login_submitted["status"] == "submitted", login_submitted
+            assert login_submitted["browser_session"]["status"] == "ready"
+
+            profile_dirs = [path for path in BROWSER_SESSIONS_DIR.iterdir() if path.is_dir()]
+            assert profile_dirs
+            preferences = [
+                path / "Default" / "Preferences"
+                for path in profile_dirs
+                if (path / "Default" / "Preferences").is_file()
+            ]
+            assert preferences
+            assert any(
+                '"credentials_enable_service":false'
+                in path.read_text(encoding="utf-8").replace(" ", "")
+                for path in preferences
+            )
+            cleared = browser_sessions.clear_session(int(saved_session["id"]))
+            assert cleared["status"] == "cleared"
+            assert not cleared["profile_present"]
+
+        assert ATSFixture.submitted_paths == ["/thanks"] * 6
 
     print("browser submission ok")
 

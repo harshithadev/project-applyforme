@@ -196,9 +196,25 @@ def init_db() -> None:
               FOREIGN KEY(application_id) REFERENCES applications(id)
             );
 
+            CREATE TABLE IF NOT EXISTS browser_sessions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_key TEXT NOT NULL UNIQUE,
+              adapter TEXT NOT NULL,
+              hostname TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'new',
+              target_url TEXT NOT NULL DEFAULT '',
+              active_task_id INTEGER,
+              message TEXT NOT NULL DEFAULT '',
+              last_verified_at TEXT NOT NULL DEFAULT '',
+              last_used_at TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS application_tasks (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               application_id INTEGER NOT NULL,
+              browser_session_id INTEGER,
               adapter TEXT NOT NULL DEFAULT '',
               target_url TEXT NOT NULL,
               mode TEXT NOT NULL,
@@ -219,7 +235,8 @@ def init_db() -> None:
               started_at TEXT NOT NULL DEFAULT '',
               updated_at TEXT NOT NULL,
               completed_at TEXT NOT NULL DEFAULT '',
-              FOREIGN KEY(application_id) REFERENCES applications(id)
+              FOREIGN KEY(application_id) REFERENCES applications(id),
+              FOREIGN KEY(browser_session_id) REFERENCES browser_sessions(id)
             );
 
             CREATE TABLE IF NOT EXISTS application_task_events (
@@ -479,6 +496,22 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_application_tasks_application "
             "ON application_tasks(application_id, created_at)"
         )
+        application_task_columns = {
+            item["name"]
+            for item in conn.execute("PRAGMA table_info(application_tasks)").fetchall()
+        }
+        if "browser_session_id" not in application_task_columns:
+            conn.execute(
+                "ALTER TABLE application_tasks ADD COLUMN browser_session_id INTEGER"
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_application_tasks_session "
+            "ON application_tasks(browser_session_id, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_browser_sessions_status "
+            "ON browser_sessions(status, updated_at)"
+        )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_application_task_events_task "
             "ON application_task_events(task_id, created_at)"
@@ -548,6 +581,7 @@ def init_db() -> None:
             "browser_headless": "true",
             "browser_submit_enabled": "false",
             "browser_allow_sensitive_answers": "false",
+            "browser_login_timeout_minutes": "15",
             "pipeline_enabled": "false",
             "pipeline_min_score": "75",
             "pipeline_auto_write": "true",

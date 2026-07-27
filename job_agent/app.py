@@ -14,6 +14,7 @@ from . import (
     approvals,
     applications,
     automation,
+    browser_sessions,
     contact_discovery,
     documents,
     emailer,
@@ -66,6 +67,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "paths": db_info(),
                     "latex_engine": available_latex_engine(),
                     "automation": automation.automation_status(),
+                    "browser_sessions": browser_sessions.list_sessions(),
                     "codex": writing.codex_status(),
                     "email": outreach.status(),
                     "service": service.status(),
@@ -175,6 +177,28 @@ class Handler(SimpleHTTPRequestHandler):
                 )
             elif path == "/api/applications/task/cancel":
                 self.json(automation.cancel_task(int(payload["task_id"])))
+            elif path == "/api/browser-sessions/login/start":
+                self.json(
+                    browser_sessions.start_login_handoff(int(payload["task_id"]))
+                )
+            elif path == "/api/browser-sessions/login/complete":
+                self.json(
+                    browser_sessions.complete_login_handoff(
+                        int(payload["browser_session_id"])
+                    )
+                )
+            elif path == "/api/browser-sessions/login/cancel":
+                self.json(
+                    browser_sessions.cancel_login_handoff(
+                        int(payload["browser_session_id"])
+                    )
+                )
+            elif path == "/api/browser-sessions/clear":
+                self.json(
+                    browser_sessions.clear_session(
+                        int(payload["browser_session_id"])
+                    )
+                )
             elif path == "/api/applications/compile":
                 self.json(applications.recompile_application(int(payload["application_id"])))
             elif path == "/api/applications/writing/queue":

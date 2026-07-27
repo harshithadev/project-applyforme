@@ -10,6 +10,7 @@ GENERATED_DIR = ROOT / "generated"
 DATA_DIR = ROOT / "data"
 WEB_DIR = ROOT / "web"
 DB_PATH = DATA_DIR / "applyforme.sqlite3"
+BROWSER_SESSIONS_DIR = DATA_DIR / "browser-sessions"
 
 SUPPORTED_DOC_EXTENSIONS = {".txt", ".md", ".tex", ".csv", ".pdf", ".docx"}
 LATEX_ENGINES = ("tectonic", "pdflatex", "xelatex", "lualatex")

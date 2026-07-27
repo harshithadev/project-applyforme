@@ -315,6 +315,14 @@
         <section id="applications" class="view">
           <section class="panel">
             <div class="panel-head">
+              <h3>Browser Sessions</h3>
+              <span id="browserSessionMeta">0 saved</span>
+            </div>
+            <div id="browserSessionList" class="browser-session-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
               <h3>Applications</h3>
               <span>Review, approve, submit, or queue browser automation.</span>
             </div>
@@ -469,6 +477,9 @@
                   <option value="true">Run in background</option>
                   <option value="false">Show browser window</option>
                 </select>
+              </label>
+              <label>Sign-in window timeout
+                <input name="browser_login_timeout_minutes" type="number" min="1" max="60" />
               </label>
               <label>Daily email limit
                 <input name="daily_email_limit" type="number" min="1" max="200" />

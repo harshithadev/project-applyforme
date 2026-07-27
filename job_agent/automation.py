@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from . import browser_sessions
 from .config import GENERATED_DIR
 from .db import connect, log, now_iso, row, rows, setting
 from .latex import application_dir
@@ -75,6 +76,10 @@ def _task_dict(task: dict[str, Any]) -> dict[str, Any]:
     )
     for event in task["events"]:
         event["meta"] = _json_value(event.get("meta"), {})
+    session_id = int(task.get("browser_session_id") or 0)
+    task["browser_session"] = (
+        browser_sessions.get_session(session_id) if session_id else None
+    )
     return task
 
 
@@ -109,6 +114,7 @@ def automation_status() -> dict[str, object]:
         "checkpoints": int(checkpoints["count"]) if checkpoints else 0,
         "final_submit_enabled": setting("browser_submit_enabled", "false") == "true",
         "supported_adapters": sorted(SUPPORTED_ADAPTERS),
+        "sessions": browser_sessions.session_status(),
     }
 
 
@@ -224,18 +230,24 @@ def apply_application(application_id: int) -> dict[str, Any]:
         return task
     target_url = str(app["apply_url"] or app["url"])
     adapter = _adapter_name(target_url, str(app["source"] or ""))
+    browser_session = (
+        browser_sessions.ensure_session(adapter, target_url)
+        if adapter in SUPPORTED_ADAPTERS
+        else None
+    )
     now = now_iso()
     with connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO application_tasks(
-              application_id, adapter, target_url, mode, status, current_step, message,
-              created_at, updated_at
+              application_id, browser_session_id, adapter, target_url, mode, status,
+              current_step, message, created_at, updated_at
             )
-            VALUES(?, ?, ?, ?, 'queued', 'queued', ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, 'queued', 'queued', ?, ?, ?)
             """,
             (
                 application_id,
+                int(browser_session["id"]) if browser_session else None,
                 adapter,
                 target_url,
                 mode,
@@ -745,17 +757,32 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
     from playwright.sync_api import sync_playwright
 
     task_id = int(task["id"])
+    session = browser_sessions.session_for_task(task)
+    session_id = int(session["id"])
+    if not browser_sessions.begin_automation(session_id, task_id):
+        return _checkpoint(
+            "session_busy",
+            "This ATS browser session is already open. The task remains paused until that window closes.",
+            target_url=task["target_url"],
+            browser_session_id=session_id,
+        )
     _record_task_event(
         task_id,
         "opening",
-        f"Opening the {task['adapter'].title()} application form.",
+        f"Opening the {task['adapter'].title()} application form with its saved local session.",
     )
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            headless=setting("browser_headless", "true") == "true"
-        )
-        page = browser.new_page(viewport={"width": 1440, "height": 1000})
         try:
+            context = browser_sessions.launch_context(
+                playwright,
+                session,
+                headless=setting("browser_headless", "true") == "true",
+            )
+        except Exception as exc:
+            browser_sessions.finish_automation(session_id, error=str(exc))
+            raise
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
             page.goto(str(task["target_url"]), wait_until="domcontentloaded", timeout=45_000)
             _save_screenshot(page, task, "01-opened")
             if _page_has_captcha(page):
@@ -772,10 +799,12 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                     target_url=page.url,
                 )
             if _page_requires_login(surface):
+                browser_sessions.mark_needs_login(session_id, task_id)
                 return _checkpoint(
                     "login",
-                    "The application requires a login. Sign in manually before continuing.",
-                    target_url=task["target_url"],
+                    "The application requires a login. Open the guided sign-in window to continue with this saved session.",
+                    target_url=page.url,
+                    browser_session_id=session_id,
                 )
             answers = _candidate_answers(app, task)
             all_snapshots: list[dict[str, Any]] = []
@@ -789,11 +818,13 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                         step=step_number,
                     )
                 if _page_requires_login(surface):
+                    browser_sessions.mark_needs_login(session_id, task_id)
                     return _checkpoint(
                         "login",
-                        "The application requires a login. Sign in manually before continuing.",
+                        "The application requires a login. Open the guided sign-in window to continue with this saved session.",
                         target_url=page.url,
                         step=step_number,
+                        browser_session_id=session_id,
                     )
                 _record_task_event(
                     task_id,
@@ -895,8 +926,14 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                 f"Automation stopped after {MAX_FORM_STEPS} application steps to prevent an unbounded workflow.",
                 target_url=page.url,
             )
+        except Exception as exc:
+            browser_sessions.finish_automation(session_id, error=str(exc))
+            raise
         finally:
-            browser.close()
+            try:
+                context.close()
+            finally:
+                browser_sessions.finish_automation(session_id)
 
 
 def process_next_task(
@@ -1029,6 +1066,7 @@ def resolve_checkpoint(
         "step_limit",
         "captcha",
         "login",
+        "session_busy",
     }
     if task["checkpoint_kind"] in non_resumable:
         raise ValueError(
@@ -1069,12 +1107,55 @@ def resolve_checkpoint(
     return get_task(task_id) or {}
 
 
+def resume_login_tasks(session_id: int) -> list[int]:
+    waiting = rows(
+        """
+        SELECT id FROM application_tasks
+        WHERE browser_session_id = ? AND status = 'checkpoint'
+          AND checkpoint_kind IN ('login', 'session_busy')
+        ORDER BY id
+        """,
+        (session_id,),
+    )
+    task_ids = [int(item["id"]) for item in waiting]
+    if not task_ids:
+        return []
+    now = now_iso()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE application_tasks
+            SET status = 'queued', current_step = 'queued', message = ?,
+                checkpoint_kind = '', checkpoint_json = '{}', updated_at = ?
+            WHERE browser_session_id = ? AND status = 'checkpoint'
+              AND checkpoint_kind IN ('login', 'session_busy')
+            """,
+            (
+                "Manual sign-in completed. Browser application re-queued with the saved session.",
+                now,
+                session_id,
+            ),
+        )
+    for task_id in task_ids:
+        _record_task_event(
+            task_id,
+            "queued",
+            "Manual sign-in completed. Browser application re-queued with the saved session.",
+        )
+    _worker_event.set()
+    return task_ids
+
+
 def cancel_task(task_id: int) -> dict[str, Any]:
     task = row("SELECT * FROM application_tasks WHERE id = ?", (task_id,))
     if not task:
         raise ValueError("Browser application task does not exist")
     if task["status"] not in {"queued", "checkpoint"}:
         raise ValueError("Only queued or checkpointed browser tasks can be cancelled")
+    session_id = int(task.get("browser_session_id") or 0)
+    session = browser_sessions.get_session(session_id) if session_id else None
+    if session and session["active"]:
+        raise ValueError("Cancel the active sign-in handoff before cancelling this task")
     with connect() as conn:
         cursor = conn.execute(
             """
@@ -1096,6 +1177,7 @@ def start_worker() -> None:
     with _worker_lock:
         if _worker_started:
             return
+        browser_sessions.recover_interrupted_handoffs()
         with connect() as conn:
             conn.execute(
                 """
