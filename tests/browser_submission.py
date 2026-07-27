@@ -51,6 +51,11 @@ class ATSFixture(BaseHTTPRequestHandler):
                   window.location.href='/manual-captcha?ats=workday&amp;cleared=1';
                 ">Complete human verification</button>
                 </body></html>"""
+        elif self.path.startswith("/adapter-drift"):
+            body = b"""<!doctype html><html><body>
+            <h1>Application experience updated</h1>
+            <button type="button">Explore jobs</button>
+            </body></html>"""
         elif self.path.startswith("/ashby/apply"):
             body = self.form(
                 """
@@ -273,6 +278,7 @@ def main() -> None:
 
         from job_agent import (
             applications,
+            ats_adapters,
             automation,
             browser_diagnostics,
             browser_sessions,
@@ -294,6 +300,7 @@ def main() -> None:
         profile.ingest_docs()
         set_setting("daily_application_limit", "10")
         set_setting("browser_headless", "true")
+        set_setting("browser_adapter_drift_threshold", "2")
         ATSFixture.submitted_paths = []
         expected_adapters = {
             "https://jobs.ashbyhq.com/example/apply": "ashby",
@@ -536,6 +543,49 @@ def main() -> None:
             assert workday_health["submitted"] >= 4
             assert workday_health["manual_submissions"] == 1
             assert workday_health["category_counts"]["captcha"] >= 2
+
+            drift_results = []
+            for index in (1, 2):
+                drift_app = draft_for_url(
+                    applications,
+                    jobs,
+                    "Ashby Platform Engineer",
+                    f"{base_url}/adapter-drift/{index}?ats=ashby",
+                )
+                automation.apply_application(int(drift_app["id"]))
+                drift_result = automation.process_next_task()
+                assert drift_result
+                assert drift_result["checkpoint_kind"] == "unsupported_form"
+                drift_results.append(drift_result)
+            adapter_state = ats_adapters.get_host_state("ashby", "127.0.0.1")
+            assert adapter_state
+            assert adapter_state["status"] == "quarantined"
+            assert adapter_state["consecutive_drift"] == 2
+            assert len(
+                [
+                    replay
+                    for replay in ats_adapters.list_replays()
+                    if replay["adapter"] == "ashby"
+                    and replay["hostname"] == "127.0.0.1"
+                    and replay["category"] == "unsupported_form"
+                ]
+            ) == 2
+
+            held_app = draft_for_url(
+                applications,
+                jobs,
+                "Ashby Platform Engineer",
+                f"{base_url}/adapter-drift/held?ats=ashby",
+            )
+            held_task = automation.apply_application(int(held_app["id"]))
+            assert automation.process_next_task() is None
+            held = automation.get_task(int(held_task["id"]))
+            assert held
+            assert held["checkpoint_kind"] == "adapter_quarantined"
+            assert held["attempt_count"] == 0
+            reactivated = ats_adapters.reactivate("ashby", "127.0.0.1")
+            assert int(held["id"]) in reactivated["requeued_task_ids"]
+            automation.cancel_task(int(held["id"]))
 
             profile_dirs = [path for path in BROWSER_SESSIONS_DIR.iterdir() if path.is_dir()]
             assert profile_dirs

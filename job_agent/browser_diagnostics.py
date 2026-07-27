@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+from . import ats_adapters
 from .config import GENERATED_DIR
-from .db import connect, now_iso, row, rows
+from .db import connect, log, now_iso, row, rows
 
 
 MAX_TEXT = 300
@@ -509,6 +510,21 @@ def record_outcome(
                 "UPDATE browser_diagnostic_bundles SET artifact_path = ? WHERE id = ?",
                 (artifact_path, bundle_id),
             )
+    try:
+        ats_adapters.record_outcome(
+            task,
+            diagnostic_id=bundle_id,
+            category=str(classification["category"]),
+            message=sanitize_text(message),
+            snapshot=safe_snapshot,
+        )
+    except Exception as exc:
+        # Diagnostics must remain available even if adapter lifecycle tracking fails.
+        log(
+            f"ATS adapter lifecycle tracking could not be saved: {sanitize_text(exc)}",
+            "warning",
+            {"application_task_id": task_id, "diagnostic_id": bundle_id},
+        )
     return get_bundle(bundle_id) or {}
 
 

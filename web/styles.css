@@ -834,12 +834,17 @@ main {
   display: grid;
 }
 
+.adapter-registry-list {
+  display: grid;
+}
+
 .browser-recovery-list {
   display: grid;
 }
 
 .browser-session-row,
 .adapter-health-row,
+.adapter-registry-row,
 .browser-recovery-row {
   display: flex;
   align-items: center;
@@ -851,12 +856,14 @@ main {
 
 .browser-session-row:first-child,
 .adapter-health-row:first-child,
+.adapter-registry-row:first-child,
 .browser-recovery-row:first-child {
   border-top: 0;
 }
 
 .browser-session-row p,
 .adapter-health-row p,
+.adapter-registry-row p,
 .browser-recovery-row p {
   margin: 4px 0;
   font-size: 13px;
@@ -865,6 +872,7 @@ main {
 .browser-session-row > div > span,
 .browser-session-actions > span,
 .adapter-health-row > div > span,
+.adapter-registry-row > div > span,
 .browser-recovery-row > div > span,
 .adapter-health-metrics span,
 .adapter-health-metrics small {
@@ -892,6 +900,20 @@ main {
   gap: 3px;
   min-width: 170px;
   text-align: right;
+}
+
+.adapter-registry-actions {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: right;
+}
+
+.adapter-registry-actions > span,
+.adapter-registry-actions > a {
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .adapter-health-metrics strong {
@@ -1495,6 +1517,7 @@ textarea {
   .connection-row,
   .browser-session-row,
   .adapter-health-row,
+  .adapter-registry-row,
   .browser-recovery-row,
   .service-details > div:first-child {
     align-items: stretch;
@@ -1521,6 +1544,11 @@ textarea {
 
   .adapter-health-metrics {
     justify-items: start;
+    text-align: left;
+  }
+
+  .adapter-registry-actions {
+    align-items: flex-start;
     text-align: left;
   }
 

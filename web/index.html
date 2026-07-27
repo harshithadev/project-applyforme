@@ -331,6 +331,14 @@
 
           <section class="panel">
             <div class="panel-head">
+              <h3>ATS Adapter Registry</h3>
+              <span id="adapterRegistryMeta">0 adapters</span>
+            </div>
+            <div id="adapterRegistryList" class="adapter-registry-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
               <h3>Browser Recovery</h3>
               <span id="browserRecoveryMeta">0 waiting</span>
             </div>
@@ -517,6 +525,9 @@
               </label>
               <label>Circuit cooldown minutes
                 <input name="browser_circuit_cooldown_minutes" type="number" min="1" max="1440" />
+              </label>
+              <label>Adapter drift threshold
+                <input name="browser_adapter_drift_threshold" type="number" min="1" max="10" />
               </label>
               <label>Daily email limit
                 <input name="daily_email_limit" type="number" min="1" max="200" />

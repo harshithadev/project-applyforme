@@ -32,6 +32,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Guided persistent-browser takeover for CAPTCHA, unsupported forms or controls, and bounded step-limit checkpoints.
 - Sanitized browser diagnostic bundles, structured recovery recommendations, and per-host ATS adapter health tracking.
 - Policy-controlled pre-submit retries with exponential backoff, attempt caps, per-host circuit breakers, and explicit recovery overrides.
+- Versioned ATS selector contracts, sanitized replay fixtures, per-host drift quarantine, and explicit adapter reactivation.
 - Contact-specific outreach revisions, explicit approval, retry controls, and SMTP daily limits.
 - Bounded public company-page contact discovery with role ranking, source provenance, and verification gates.
 - Plain-English activity log.
@@ -122,6 +123,22 @@ Profiles are stored under `data/browser-sessions/` in owner-only directories. Ch
 
 CAPTCHA, unsupported-form, unsupported-control, and step-limit checkpoints expose **Open manual browser**. **Manual step complete** captures the current page URL, closes the visible window, and re-queues the worker from that page in a separate Chromium launch. **I submitted manually** never clicks submit; it records the application only when the page contains a recognizable confirmation and no final-submit control remains. Unsupported ATS sites can be completed manually but cannot be returned to automatic form handling.
 
+## ATS adapter lifecycle
+
+Greenhouse, Lever, Ashby, SmartRecruiters, and Workday browser behavior is defined in a central versioned registry. Each completed form, review checkpoint, or structural incompatibility stores a sanitized replay fixture containing control names, labels, types, and button structure without field values, query strings, credentials, or document content.
+
+Repeated `unsupported_form`, `submit_control`, or `step_limit` outcomes for the same adapter and hostname trigger drift quarantine at the configured threshold. New tasks for that host stop at an `adapter_quarantined` checkpoint before Playwright launches. The **ATS Adapter Registry** shows versions, capabilities, host status, drift counts, and the latest replay. **Reactivate** resets the drift counter and re-queues held tasks after the replay has been reviewed or the selector contract has been updated.
+
+CAPTCHA, login, final review, unknown questions, network failures, and manual submissions do not count as selector drift. Network and browser-environment failures continue to use the separate retry and circuit-breaker policy.
+
+Run the deterministic registry/API test and the real Chromium adapter test with:
+
+```bash
+npm run test:adapters
+npm run test:dashboard
+npm run test:browser
+```
+
 ## Source documents
 
 Add source files from the **Documents** view or place them directly in `docs/`. The login service watches the folder and reconciles additions, changes, and removals automatically. **Ingest docs** remains available for an immediate manual scan.
@@ -208,10 +225,11 @@ Run the durable pipeline and guarded end-to-end transition test with:
 npm run test:pipeline
 ```
 
-Run the persistent task lifecycle, retry policy, circuit breakers, real local Chromium adapter, saved-session, login-handoff, manual-takeover, guarded manual-submission, sanitized diagnostics, adapter-health, and profile-clearing tests with:
+Run the persistent task lifecycle, retry policy, circuit breakers, versioned adapter registry, replay/quarantine lifecycle, real local Chromium adapter, saved-session, login-handoff, manual-takeover, guarded manual-submission, sanitized diagnostics, adapter-health, and profile-clearing tests with:
 
 ```bash
 npm run test:applications
+npm run test:adapters
 npm run test:browser
 ```
 

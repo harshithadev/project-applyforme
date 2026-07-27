@@ -6,9 +6,8 @@ import re
 import threading
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
 
-from . import browser_diagnostics, browser_recovery, browser_sessions
+from . import ats_adapters, browser_diagnostics, browser_recovery, browser_sessions
 from .config import GENERATED_DIR
 from .db import connect, log, now_iso, row, rows, setting
 from .latex import application_dir
@@ -25,9 +24,7 @@ SUCCESS_PATTERNS = re.compile(
     r"thank you|application (?:was )?(?:submitted|received)|we(?:'|’)ve received your application",
     re.IGNORECASE,
 )
-SUPPORTED_ADAPTERS = frozenset(
-    {"greenhouse", "lever", "ashby", "smartrecruiters", "workday"}
-)
+SUPPORTED_ADAPTERS = ats_adapters.supported_adapters()
 MAX_FORM_STEPS = 8
 _worker_event = threading.Event()
 _worker_lock = threading.Lock()
@@ -134,31 +131,7 @@ def _application_record(application_id: int) -> dict[str, Any] | None:
 
 
 def _adapter_name(target_url: str, source: str = "") -> str:
-    parsed = urlparse(target_url)
-    hostname = (parsed.hostname or "").casefold()
-    requested = parse_qs(parsed.query).get("ats", [""])[0].casefold()
-    source_name = source.casefold()
-    if requested in SUPPORTED_ADAPTERS:
-        return requested
-    if "greenhouse.io" in hostname or "greenhouse" in source_name:
-        return "greenhouse"
-    if "lever.co" in hostname or source_name == "lever":
-        return "lever"
-    if "ashbyhq.com" in hostname or source_name == "ashby":
-        return "ashby"
-    if (
-        "smartrecruiters.com" in hostname
-        or hostname == "smrtr.io"
-        or "smartrecruiters" in source_name
-    ):
-        return "smartrecruiters"
-    if (
-        "myworkdayjobs.com" in hostname
-        or "myworkdaysite.com" in hostname
-        or "workday" in source_name
-    ):
-        return "workday"
-    return "unsupported"
+    return ats_adapters.detect_adapter(target_url, source)
 
 
 def _record_task_event(
@@ -278,6 +251,7 @@ def apply_application(application_id: int) -> dict[str, Any]:
 
 def _claim_next_task() -> dict[str, Any] | None:
     blocked: list[tuple[int, str, str, str]] = []
+    quarantined: list[tuple[int, str, dict[str, object]]] = []
     claimed_id = 0
     current = now_iso()
     with connect() as conn:
@@ -296,6 +270,37 @@ def _claim_next_task() -> dict[str, Any] | None:
         ).fetchall()
         for found in candidates:
             candidate = dict(found)
+            adapter_gate = ats_adapters.attempt_gate(candidate)
+            if not adapter_gate["allowed"]:
+                message = str(
+                    adapter_gate.get("message")
+                    or "This ATS adapter is quarantined for compatibility drift."
+                )
+                checkpoint = {
+                    "target_url": str(candidate.get("target_url") or ""),
+                    "adapter": str(adapter_gate.get("adapter") or ""),
+                    "hostname": str(adapter_gate.get("hostname") or ""),
+                    "adapter_version": str(adapter_gate.get("adapter_version") or ""),
+                }
+                conn.execute(
+                    """
+                    UPDATE application_tasks
+                    SET status = 'checkpoint', current_step = 'checkpoint',
+                        message = ?, checkpoint_kind = 'adapter_quarantined',
+                        checkpoint_json = ?, next_attempt_at = '',
+                        retry_category = '', retry_reason = 'adapter_quarantined',
+                        retry_exhausted = 0, updated_at = ?
+                    WHERE id = ? AND status IN ('queued', 'retry_wait')
+                    """,
+                    (
+                        message,
+                        json.dumps(checkpoint),
+                        current,
+                        int(found["id"]),
+                    ),
+                )
+                quarantined.append((int(found["id"]), message, checkpoint))
+                continue
             gate = browser_recovery.attempt_gate(candidate)
             if not gate["allowed"]:
                 next_attempt_at = str(gate.get("next_attempt_at") or "")
@@ -345,6 +350,14 @@ def _claim_next_task() -> dict[str, Any] | None:
             message,
             "warning",
             {"reason": reason, "next_attempt_at": next_attempt_at},
+        )
+    for task_id, message, checkpoint in quarantined:
+        _record_task_event(
+            task_id,
+            "checkpoint",
+            message,
+            "warning",
+            {"kind": "adapter_quarantined", **checkpoint},
         )
     if not claimed_id:
         return None
@@ -603,47 +616,47 @@ def _click_and_settle(page: Any, control: Any) -> None:
     page.wait_for_timeout(300)
 
 
+def _first_matching_selector(surface: Any, selectors: tuple[str, ...]) -> Any | None:
+    for selector in selectors:
+        control = surface.locator(selector).first
+        if control.count():
+            return control
+    return None
+
+
 def _open_application_form(page: Any, adapter: str, task_id: int) -> Any:
     surface = _find_form_surface(page)
     if _surface_has_application_fields(surface):
         return surface
-    special_selectors = {
-        "greenhouse": "a[href*='#app']",
-        "lever": "a.postings-btn, a[href$='/apply'], a[href*='/apply?']",
-        "ashby": "a[href$='/apply'], a[href*='/apply?']",
-        "smartrecruiters": "",
-        "workday": "[data-automation-id='jobPostingApplyButton']",
-    }
-    labels = {
-        "greenhouse": r"apply for this job|apply now|apply",
-        "lever": r"apply for this job|apply now|apply",
-        "ashby": r"apply for this job|apply now|apply",
-        "smartrecruiters": r"i['’]m interested|apply now|apply",
-        "workday": r"apply now|apply",
-    }
-    special = special_selectors.get(adapter, "")
-    apply_control = page.locator(special).first if special else None
-    if apply_control is None or not apply_control.count():
+    spec = ats_adapters.definition(adapter)
+    apply_control = _first_matching_selector(
+        page,
+        spec.apply_selectors if spec else (),
+    )
+    if apply_control is None:
         apply_control = page.locator("button, a").filter(
             has_text=re.compile(
-                rf"^\s*(?:{labels.get(adapter, 'apply')})\s*$",
+                rf"^\s*(?:{spec.apply_labels if spec else 'apply'})\s*$",
                 re.IGNORECASE,
             )
         ).first
     if apply_control.count():
         _record_task_event(task_id, "opening", "Opening the posting's application form.")
         _click_and_settle(page, apply_control)
-        if adapter == "workday":
-            manual = page.locator("[data-automation-id='applyManually']").first
-            if not manual.count():
+        if spec and spec.manual_path_labels:
+            manual = _first_matching_selector(page, spec.manual_path_selectors)
+            if manual is None:
                 manual = page.locator("button, a").filter(
-                    has_text=re.compile(r"^\s*apply manually\s*$", re.IGNORECASE)
+                    has_text=re.compile(
+                        rf"^\s*(?:{spec.manual_path_labels})\s*$",
+                        re.IGNORECASE,
+                    )
                 ).first
             if manual.count():
                 _record_task_event(
                     task_id,
                     "opening",
-                    "Choosing Workday's manual application path.",
+                    f"Choosing {adapter.title()}'s manual application path.",
                 )
                 _click_and_settle(page, manual)
         return _find_form_surface(page)
@@ -651,32 +664,35 @@ def _open_application_form(page: Any, adapter: str, task_id: int) -> Any:
 
 
 def _submit_locator(page: Any, adapter: str) -> Any:
+    spec = ats_adapters.definition(adapter)
     buttons = page.locator("button").filter(
         has_text=re.compile(
-            r"^\s*(?:submit|submit application|send application)\s*$",
+            rf"^\s*(?:{spec.submit_labels if spec else 'submit|submit application'})\s*$",
             re.IGNORECASE,
         )
     )
     if buttons.count():
         return buttons.first
-    if adapter == "workday":
-        workday_submit = page.locator("[data-automation-id='submitButton']").first
-        if workday_submit.count():
-            return workday_submit
+    selected = _first_matching_selector(
+        page,
+        spec.submit_selectors if spec else ("input[type='submit'][value*='Submit' i]",),
+    )
+    if selected is not None:
+        return selected
     return page.locator("input[type='submit'][value*='Submit' i]").first
 
 
 def _continue_locator(page: Any, adapter: str) -> Any:
-    labels = {
-        "smartrecruiters": r"next|continue|save and continue",
-        "workday": r"next|save and continue|save & continue",
-        "ashby": r"next|continue",
-    }
-    choices = labels.get(adapter)
-    if not choices:
+    spec = ats_adapters.definition(adapter)
+    if not spec:
+        return None
+    selected = _first_matching_selector(page, spec.continue_selectors)
+    if selected is not None:
+        return selected
+    if not spec.continue_labels:
         return None
     return page.locator("button, a").filter(
-        has_text=re.compile(rf"^\s*(?:{choices})\s*$", re.IGNORECASE)
+        has_text=re.compile(rf"^\s*(?:{spec.continue_labels})\s*$", re.IGNORECASE)
     ).first
 
 
@@ -1358,6 +1374,7 @@ def resolve_checkpoint(
         "unsupported_form",
         "submit_control",
         "step_limit",
+        "adapter_quarantined",
         "captcha",
         "login",
         "session_busy",

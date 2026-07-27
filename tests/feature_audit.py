@@ -221,6 +221,7 @@ def main() -> None:
         from job_agent import (
             app,
             applications,
+            ats_adapters,
             automation,
             browser_diagnostics,
             browser_recovery,
@@ -779,6 +780,56 @@ def main() -> None:
             "Ashby, SmartRecruiters, and Workday URLs route to native discovery and guarded browser adapters."
             if adapters_ready and discovery_ready
             else "One or more extended ATS URL patterns were not recognized for discovery and submission.",
+        )
+
+        adapter_registry_ready = bool(
+            all(
+                definition
+                and definition.version
+                and definition.apply_labels
+                and "guarded-submit" in definition.capabilities
+                for definition in (
+                    ats_adapters.definition(adapter)
+                    for adapter in ats_adapters.supported_adapters()
+                )
+            )
+            and ats_adapters.replay_check(
+                {
+                    "adapter": "ashby",
+                    "category": "submit_control",
+                    "snapshot": {
+                        "form_count": 1,
+                        "controls": [
+                            {
+                                "tag": "input",
+                                "type": "email",
+                                "name": "email",
+                                "question": "Email",
+                                "required": True,
+                            }
+                        ],
+                        "buttons": [
+                            {
+                                "tag": "button",
+                                "type": "button",
+                                "name": "",
+                                "question": "Explore jobs",
+                                "disabled": False,
+                            }
+                        ],
+                    },
+                }
+            )["reproduced"]
+        )
+        record(
+            "PASS" if adapter_registry_ready else "FAIL",
+            "Versioned ATS adapter lifecycle",
+            (
+                "Selector contracts are versioned, sanitized snapshots can be replayed, "
+                "and repeated compatibility drift quarantines a host before another browser launch."
+            )
+            if adapter_registry_ready
+            else "The versioned adapter registry or replay evaluator is incomplete.",
         )
 
         set_setting("browser_retry_enabled", "true")

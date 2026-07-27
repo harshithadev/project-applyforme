@@ -25,9 +25,13 @@ MANUAL_TAKEOVER_KINDS = frozenset(
         "unsupported_form",
         "submit_control",
         "step_limit",
+        "adapter_quarantined",
     }
 )
-MANUAL_RESUME_KINDS = MANUAL_TAKEOVER_KINDS - {"unsupported_site"}
+MANUAL_RESUME_KINDS = MANUAL_TAKEOVER_KINDS - {
+    "unsupported_site",
+    "adapter_quarantined",
+}
 
 
 @dataclass

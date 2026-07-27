@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from . import (
     approvals,
     applications,
+    ats_adapters,
     automation,
     browser_diagnostics,
     browser_recovery,
@@ -69,6 +70,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "paths": db_info(),
                     "latex_engine": available_latex_engine(),
                     "automation": automation.automation_status(),
+                    "ats_adapters": ats_adapters.dashboard_state(),
                     "browser_diagnostics": browser_diagnostics.dashboard_state(),
                     "browser_recovery": browser_recovery.dashboard_state(),
                     "browser_sessions": browser_sessions.list_sessions(),
@@ -89,6 +91,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/applications/task-diagnostic":
             self.send_application_task_diagnostic()
+            return
+        if path == "/api/ats-adapters/replay":
+            self.send_ats_replay()
             return
         if path == "/api/documents/artifact":
             self.send_document_artifact()
@@ -194,6 +199,13 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/browser-recovery/circuit/reset":
                 self.json(
                     browser_recovery.reset_circuit(
+                        str(payload["adapter"]),
+                        str(payload["hostname"]),
+                    )
+                )
+            elif path == "/api/ats-adapters/reactivate":
+                self.json(
+                    ats_adapters.reactivate(
                         str(payload["adapter"]),
                         str(payload["hostname"]),
                     )
@@ -437,6 +449,39 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header(
             "Content-Disposition",
             f'attachment; filename="browser-diagnostic-{bundle_id}.json"',
+        )
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_ats_replay(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            replay_id = int(query.get("replay_id", [""])[0])
+        except ValueError:
+            self.send_error(400, "Invalid ATS replay ID")
+            return
+        replay = ats_adapters.replay_artifact(replay_id)
+        if not replay:
+            self.send_error(404, "ATS replay not found")
+            return
+        artifact = Path(str(replay.get("artifact_path") or "")).resolve()
+        generated_root = (GENERATED_DIR / "browser" / "replays").resolve()
+        if (
+            artifact.parent != generated_root
+            or not artifact.is_file()
+            or artifact.suffix.lower() != ".json"
+            or artifact.name != f"replay-{replay_id}.json"
+        ):
+            self.send_error(404, "ATS replay not found")
+            return
+        data = artifact.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header(
+            "Content-Disposition",
+            f'attachment; filename="ats-replay-{replay_id}.json"',
         )
         self.send_header("Content-Length", str(len(data)))
         self.send_header("X-Content-Type-Options", "nosniff")

@@ -128,6 +128,7 @@ function render() {
     data.browser_diagnostics || {},
     data.browser_recovery || {}
   );
+  renderAdapterRegistry(data.ats_adapters || {});
   renderBrowserRecovery(data.browser_recovery || {});
   renderOutreach(
     data.outreach || [],
@@ -610,9 +611,12 @@ function renderBrowserTask(task) {
     "unsupported_site",
     "unsupported_form",
     "submit_control",
-    "step_limit"
+    "step_limit",
+    "adapter_quarantined"
   ];
-  const takeoverResumeKinds = takeoverKinds.filter((kind) => kind !== "unsupported_site");
+  const takeoverResumeKinds = takeoverKinds.filter((kind) =>
+    !["unsupported_site", "adapter_quarantined"].includes(kind)
+  );
   const handoffOwned = Number(session.active_task_id || 0) === Number(task.id);
   const manualTakeover = takeoverKinds.includes(task.checkpoint_kind);
   const latestScreenshot = (task.screenshots || []).at(-1);
@@ -646,6 +650,7 @@ function renderBrowserTask(task) {
     "unsupported_form",
     "submit_control",
     "step_limit",
+    "adapter_quarantined",
     "captcha",
     "login"
   ].includes(task.checkpoint_kind);
@@ -811,6 +816,70 @@ function renderAdapterHealth(diagnostics, recovery) {
       `;
       }).join("")
     : `<div class="empty">Adapter health will appear after the first browser application attempt.</div>`;
+}
+
+function renderAdapterRegistry(registry) {
+  const summary = registry.summary || {};
+  const policy = registry.policy || {};
+  const adapters = registry.adapters || [];
+  const replays = registry.recent_replays || [];
+  $("#adapterRegistryMeta").textContent = `${Number(summary.adapters || 0)} versioned · ${Number(summary.quarantined || 0)} quarantined · threshold ${Number(policy.drift_threshold || 0)}`;
+  const latestReplay = new Map();
+  replays.forEach((replay) => {
+    const key = `${replay.adapter}::${replay.hostname}`;
+    if (!latestReplay.has(key)) latestReplay.set(key, replay);
+  });
+  const rows = adapters.flatMap((adapter) => {
+    const hosts = adapter.hosts || [];
+    if (!hosts.length) {
+      return [`
+        <div class="adapter-registry-row">
+          <div>
+            <div class="browser-session-heading">
+              <strong>${escapeHtml(formatMode(adapter.name))}</strong>
+              <span class="status">Not observed</span>
+            </div>
+            <p>Version ${escapeHtml(adapter.version)}</p>
+            <span>${escapeHtml((adapter.capabilities || []).map(formatMode).join(" · "))}</span>
+          </div>
+          <div class="adapter-registry-actions">
+            <span>No host history</span>
+          </div>
+        </div>
+      `];
+    }
+    return hosts.map((host) => {
+      const replay = latestReplay.get(`${adapter.name}::${host.hostname}`) || {};
+      const status = host.effective_status || host.status || "active";
+      return `
+        <div class="adapter-registry-row">
+          <div>
+            <div class="browser-session-heading">
+              <strong>${escapeHtml(formatMode(adapter.name))}</strong>
+              <span class="status">${escapeHtml(formatMode(status))}</span>
+            </div>
+            <p>${escapeHtml(host.hostname)} · version ${escapeHtml(adapter.version)}</p>
+            <span>${Number(host.consecutive_drift || 0)} consecutive drift · ${Number(host.total_drift || 0)} total · last ${escapeHtml(formatMode(host.last_category || "none"))}</span>
+          </div>
+          <div class="adapter-registry-actions">
+            ${replay.download_available
+              ? `<a href="/api/ats-adapters/replay?replay_id=${encodeURIComponent(replay.id)}">Replay #${Number(replay.id)}</a>`
+              : `<span>No replay</span>`}
+            ${["quarantined", "version_updated"].includes(status)
+              ? `<button
+                  class="secondary"
+                  data-action="adapter-reactivate"
+                  data-adapter="${escapeHtml(adapter.name)}"
+                  data-hostname="${escapeHtml(host.hostname)}"
+                >Reactivate</button>`
+              : ""}
+          </div>
+        </div>
+      `;
+    });
+  });
+  $("#adapterRegistryList").innerHTML = rows.join("")
+    || `<div class="empty">No ATS adapters are registered.</div>`;
 }
 
 function renderBrowserRecovery(recovery) {
@@ -1438,6 +1507,16 @@ async function handleAction(action, button) {
         })
       });
       toast(result.message || "ATS circuit reset.");
+    } else if (action === "adapter-reactivate") {
+      if (!window.confirm("Reactivate this ATS adapter host and re-queue its paused applications?")) return;
+      const result = await api("/api/ats-adapters/reactivate", {
+        method: "POST",
+        body: JSON.stringify({
+          adapter: button.dataset.adapter,
+          hostname: button.dataset.hostname
+        })
+      });
+      toast(result.message || "ATS adapter reactivated.");
     } else if (action === "compile") {
       const result = await api("/api/applications/compile", {
         method: "POST",

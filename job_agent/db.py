@@ -301,6 +301,38 @@ def init_db() -> None:
               PRIMARY KEY(adapter, hostname)
             );
 
+            CREATE TABLE IF NOT EXISTS ats_adapter_states (
+              adapter TEXT NOT NULL,
+              hostname TEXT NOT NULL,
+              adapter_version TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              consecutive_drift INTEGER NOT NULL DEFAULT 0,
+              total_drift INTEGER NOT NULL DEFAULT 0,
+              last_category TEXT NOT NULL DEFAULT '',
+              last_message TEXT NOT NULL DEFAULT '',
+              last_signature_json TEXT NOT NULL DEFAULT '{}',
+              last_diagnostic_id INTEGER,
+              quarantined_at TEXT NOT NULL DEFAULT '',
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY(adapter, hostname),
+              FOREIGN KEY(last_diagnostic_id) REFERENCES browser_diagnostic_bundles(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ats_replay_fixtures (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id INTEGER NOT NULL,
+              diagnostic_id INTEGER NOT NULL UNIQUE,
+              adapter TEXT NOT NULL,
+              hostname TEXT NOT NULL,
+              adapter_version TEXT NOT NULL,
+              category TEXT NOT NULL,
+              signature_json TEXT NOT NULL DEFAULT '{}',
+              artifact_path TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(task_id) REFERENCES application_tasks(id),
+              FOREIGN KEY(diagnostic_id) REFERENCES browser_diagnostic_bundles(id)
+            );
+
             CREATE TABLE IF NOT EXISTS answer_rules (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               question TEXT NOT NULL UNIQUE,
@@ -602,6 +634,14 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_adapter_circuits_status "
             "ON adapter_circuit_breakers(status, retry_after)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ats_adapter_states_status "
+            "ON ats_adapter_states(status, updated_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ats_replay_adapter "
+            "ON ats_replay_fixtures(adapter, hostname, created_at DESC)"
+        )
         contact_columns = {
             "verification_status": "TEXT NOT NULL DEFAULT 'unverified'",
             "email_kind": "TEXT NOT NULL DEFAULT 'manual'",
@@ -674,6 +714,7 @@ def init_db() -> None:
             "browser_retry_max_delay_seconds": "900",
             "browser_circuit_failure_threshold": "3",
             "browser_circuit_cooldown_minutes": "30",
+            "browser_adapter_drift_threshold": "2",
             "pipeline_enabled": "false",
             "pipeline_min_score": "75",
             "pipeline_auto_write": "true",

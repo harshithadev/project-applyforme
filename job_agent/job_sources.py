@@ -10,6 +10,8 @@ from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
+from . import ats_adapters
+
 
 USER_AGENT = "ApplyForMeLocal/0.2"
 TRACKING_QUERY_KEYS = {
@@ -225,18 +227,7 @@ def post_json(url: str, payload: dict[str, object]) -> object:
 
 
 def source_kind(url: str) -> str:
-    host = (urlsplit(url).hostname or "").lower()
-    if host in {"boards.greenhouse.io", "job-boards.greenhouse.io", "boards-api.greenhouse.io"}:
-        return "greenhouse"
-    if host in {"jobs.lever.co", "jobs.eu.lever.co", "api.lever.co", "api.eu.lever.co"}:
-        return "lever"
-    if host in {"jobs.ashbyhq.com", "api.ashbyhq.com"}:
-        return "ashby"
-    if host.endswith("smartrecruiters.com"):
-        return "smartrecruiters"
-    if host.endswith("myworkdayjobs.com") or host.endswith("myworkdaysite.com"):
-        return "workday"
-    return "career-page"
+    return ats_adapters.source_kind(url)
 
 
 def configured_company(url: str, companies: list[str]) -> str:
