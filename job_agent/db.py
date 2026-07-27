@@ -54,6 +54,12 @@ def init_db() -> None:
               ingest_error TEXT NOT NULL DEFAULT '',
               size_bytes INTEGER NOT NULL DEFAULT 0,
               metadata TEXT NOT NULL DEFAULT '{}',
+              source TEXT NOT NULL DEFAULT 'folder',
+              review_status TEXT NOT NULL DEFAULT 'approved',
+              extraction_confidence REAL NOT NULL DEFAULT 0,
+              classification_confidence REAL NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL DEFAULT '',
+              archived_at TEXT NOT NULL DEFAULT '',
               updated_at TEXT NOT NULL
             );
 
@@ -370,11 +376,39 @@ def init_db() -> None:
             "ingest_error": "TEXT NOT NULL DEFAULT ''",
             "size_bytes": "INTEGER NOT NULL DEFAULT 0",
             "metadata": "TEXT NOT NULL DEFAULT '{}'",
+            "source": "TEXT NOT NULL DEFAULT 'folder'",
+            "review_status": "TEXT NOT NULL DEFAULT 'approved'",
+            "extraction_confidence": "REAL NOT NULL DEFAULT 0",
+            "classification_confidence": "REAL NOT NULL DEFAULT 0",
+            "created_at": "TEXT NOT NULL DEFAULT ''",
+            "archived_at": "TEXT NOT NULL DEFAULT ''",
         }
         existing_columns = {item["name"] for item in conn.execute("PRAGMA table_info(documents)").fetchall()}
         for name, definition in document_columns.items():
             if name not in existing_columns:
                 conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {definition}")
+        conn.execute(
+            "UPDATE documents SET created_at = updated_at WHERE created_at = ''"
+        )
+        conn.execute(
+            """
+            UPDATE documents
+            SET extraction_confidence = CASE
+              WHEN extractor IN ('utf-8-text', 'docx-ooxml') THEN 1.0
+              WHEN extractor = 'pypdf' THEN 0.98
+              ELSE extraction_confidence
+            END
+            WHERE extraction_confidence = 0
+            """
+        )
+        conn.execute(
+            """
+            UPDATE documents
+            SET classification_confidence =
+              CASE WHEN kind = 'source' THEN 0.35 ELSE 0.95 END
+            WHERE classification_confidence = 0
+            """
+        )
         job_columns = {
             "external_id": "TEXT NOT NULL DEFAULT ''",
             "source_key": "TEXT NOT NULL DEFAULT ''",
@@ -510,6 +544,8 @@ def init_db() -> None:
             "notifications_enabled": "true",
             "notification_quiet_start": "22:00",
             "notification_quiet_end": "08:00",
+            "document_review_mode": "false",
+            "document_scan_interval_seconds": "15",
         }
         for key, value in defaults.items():
             conn.execute(

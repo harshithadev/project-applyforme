@@ -7,6 +7,8 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Local browser dashboard at `http://127.0.0.1:8787`.
 - SQLite tracker in `data/applyforme.sqlite3`.
 - PDF, DOCX, and text document ingestion from `docs/`.
+- Secure website uploads, automatic folder reconciliation, duplicate detection, and local scanned-PDF OCR.
+- Document review, classification, extraction confidence, archive, restore, and removal controls.
 - A source-grounded structured candidate profile with contact, skills, education, certifications, and evidence.
 - Manual job entry and enriched career-page scanning with Greenhouse, Lever, Ashby, SmartRecruiters, and Workday adapters.
 - Persistent per-source cursors, pagination status, scan counts, and errors in the dashboard.
@@ -45,7 +47,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 Install the system tools used for reliable compilation and visual PDF checks on macOS:
 
 ```bash
-brew install tectonic poppler
+brew install tectonic poppler tesseract
 ```
 
 Then install the Python dependencies and start the app:
@@ -87,7 +89,7 @@ chmod 600 .env
 
 ## Source documents
 
-Add readable source files to `docs/`, then click **Ingest docs** in the dashboard.
+Add source files from the **Documents** view or place them directly in `docs/`. The login service watches the folder and reconciles additions, changes, and removals automatically. **Ingest docs** remains available for an immediate manual scan.
 
 Supported source formats:
 
@@ -95,10 +97,20 @@ Supported source formats:
 - `.md`
 - `.tex`
 - `.csv`
-- `.pdf` with embedded text
+- `.pdf` with embedded text or scanned page images
 - `.docx`
 
-Files are classified from their names, tracked by content hash, and re-ingested only when changed. Removed files are also removed from the local candidate profile. Image-only PDFs are reported as requiring OCR rather than being silently ignored.
+Uploads are restricted by extension, signature, filename, file count, and size before being written atomically to local storage. Files are classified from their names, tracked by content hash, and re-ingested only when changed. Duplicate content is blocked even when the filename differs.
+
+Image-only PDFs are rendered locally with Poppler and read by Tesseract. OCR confidence, extraction method, page limits, warnings, and source provenance remain attached to the document. No document content is sent to a paid OCR or external AI service.
+
+Enable **Settings > Document review** to keep newly extracted evidence out of the candidate profile until it is approved. Documents can be renamed, manually classified, previewed, archived, restored, or permanently removed. New documents, review requests, duplicates, and extraction failures also appear in the Approval Inbox and use its notification policy.
+
+Run the upload, OCR, review, duplicate, lifecycle, profile-rebuild, and folder-watcher test with:
+
+```bash
+npm run test:documents
+```
 
 ## Job sources
 

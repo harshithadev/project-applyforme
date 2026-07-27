@@ -126,6 +126,35 @@ def request_bytes(url: str) -> tuple[bytes, str, str]:
         )
 
 
+def request_multipart(
+    url: str,
+    *,
+    name: str,
+    content: bytes,
+    content_type: str = "application/octet-stream",
+) -> dict[str, object]:
+    boundary = "----applyforme-feature-audit"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="documents"; filename="{name}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode("ascii") + content + f"\r\n--{boundary}--\r\n".encode("ascii")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        response_body = exc.read().decode("utf-8", errors="replace")
+        raise AssertionError(
+            f"POST {url} returned {exc.code}: {response_body}"
+        ) from exc
+
+
 class QuietAppHandler:
     @staticmethod
     def build(handler: type[BaseHTTPRequestHandler]) -> type[BaseHTTPRequestHandler]:
@@ -482,6 +511,22 @@ def main() -> None:
         api_handler = QuietAppHandler.build(app.Handler)
         with running_server(api_handler) as dashboard_url:
             state = request_json(f"{dashboard_url}/api/state")
+            uploaded_document = request_multipart(
+                f"{dashboard_url}/api/documents/upload",
+                name="web-evidence.txt",
+                content=b"Web upload evidence with Python and reliable automation.",
+                content_type="text/plain",
+            )
+            uploaded_document_id = int(
+                next(
+                    item["id"]
+                    for item in uploaded_document.get("files", [])
+                    if item.get("id")
+                )
+            )
+            uploaded_body, uploaded_type, uploaded_disposition = request_bytes(
+                f"{dashboard_url}/api/documents/artifact?document_id={uploaded_document_id}"
+            )
             created = request_json(
                 f"{dashboard_url}/api/jobs",
                 {
@@ -548,6 +593,7 @@ def main() -> None:
             and state.get("pipeline")
             and state.get("service")
             and state.get("approvals")
+            and state.get("document_inbox")
             and created.get("id")
             and api_application.get("id")
             and api_contact.get("id")
@@ -571,8 +617,26 @@ def main() -> None:
                 f"state={bool(state.get('settings'))}, pipeline={bool(state.get('pipeline'))}, "
                 f"service={bool(state.get('service'))}, "
                 f"approvals={bool(state.get('approvals'))}, "
+                f"documents={bool(state.get('document_inbox'))}, "
                 f"created_id={created.get('id')}",
             )
+        document_inbox_ok = bool(
+            uploaded_document.get("saved") == 1
+            and uploaded_body.startswith(b"Web upload evidence")
+            and uploaded_type == "text/plain"
+            and "inline" in uploaded_disposition
+        )
+        record(
+            "PASS" if document_inbox_ok else "FAIL",
+            "Website document inbox",
+            "Validated multipart uploads are stored locally, ingested, and exposed through scoped artifact access.",
+        )
+        ocr_ready = bool(state.get("document_inbox", {}).get("ocr", {}).get("available"))
+        record(
+            "PASS" if ocr_ready else "BLOCKED",
+            "Local scanned-PDF OCR",
+            "Poppler rendering and Tesseract OCR are available for image-only PDFs.",
+        )
         inbox_ok = bool(
             approval_item
             and approval_resolution.get("item", {}).get("resolution") == "approve"

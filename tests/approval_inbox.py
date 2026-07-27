@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -14,6 +15,7 @@ def main() -> None:
         os.environ["APPLYFORME_ROOT"] = tmp
 
         from job_agent import approvals, jobs, outreach
+        from job_agent.config import DOCS_DIR
         from job_agent.db import connect, init_db, now_iso, row, rows, set_setting
 
         init_db()
@@ -159,6 +161,49 @@ def main() -> None:
             ("Why are you interested?",),
         )["answer"] == "The role matches my platform work."
 
+        DOCS_DIR.mkdir(parents=True, exist_ok=True)
+        document_path = DOCS_DIR / "new-evidence.txt"
+        document_content = b"Reviewed Python platform evidence."
+        document_path.write_bytes(document_content)
+        document_time = "2026-01-02T13:00:00+00:00"
+        with connect() as conn:
+            document_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO documents(
+                      path, name, kind, content, summary, sha256, extractor,
+                      ingest_status, review_status, size_bytes, metadata,
+                      created_at, updated_at
+                    )
+                    VALUES(
+                      ?, 'new-evidence.txt', 'source', ?, ?, ?, 'utf-8-text',
+                      'pending_review', 'pending', ?, '{}', ?, ?
+                    )
+                    """,
+                    (
+                        str(document_path.resolve()),
+                        document_content.decode("utf-8"),
+                        document_content.decode("utf-8"),
+                        hashlib.sha256(document_content).hexdigest(),
+                        len(document_content),
+                        document_time,
+                        document_time,
+                    ),
+                ).lastrowid
+            )
+        approvals.sync_inbox()
+        document_item = next(
+            item
+            for item in approvals.list_items()
+            if item["source_type"] == "document"
+            and int(item["source_id"]) == document_id
+        )
+        document_result = approvals.resolve_item(
+            int(document_item["id"]),
+            "approve",
+        )
+        assert document_result["result"]["status"] == "ready"
+
         contact = outreach.create_contact(
             {
                 "company": "ExampleCo",
@@ -240,7 +285,7 @@ def main() -> None:
 
         decision_actions = {item["action"] for item in approvals.decision_history()}
         assert {"approve", "continue", "retry"} <= decision_actions
-        assert len(rows("SELECT id FROM approval_decisions")) == 4
+        assert len(rows("SELECT id FROM approval_decisions")) == 5
 
         with connect() as conn:
             conn.execute(

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from . import applications, automation, orchestration, outreach
+from . import applications, automation, documents, orchestration, outreach
 from .db import connect, log, now_iso, row, rows, setting
 
 
@@ -286,12 +286,96 @@ def _pipeline_candidates() -> list[dict[str, object]]:
     ]
 
 
+def _document_candidates() -> list[dict[str, object]]:
+    found = rows(
+        """
+        SELECT id, name, kind, ingest_status, ingest_error, sha256, extractor,
+               extraction_confidence, classification_confidence, content,
+               updated_at
+        FROM documents
+        WHERE ingest_status IN ('ready', 'pending_review', 'error', 'duplicate')
+        """
+    )
+    candidates: list[dict[str, object]] = []
+    for item in found:
+        status = str(item["ingest_status"])
+        if status == "pending_review":
+            priority = 75
+            title = f"Review document {item['name']}"
+            summary = "Extracted document evidence is waiting for approval before it updates your profile."
+            actions = [
+                _action("approve", "Approve evidence"),
+                _action("archive", "Archive", style="secondary"),
+                _action(
+                    "remove",
+                    "Remove",
+                    style="secondary",
+                    confirmation="Permanently remove this document from local storage?",
+                ),
+            ]
+        elif status in {"error", "duplicate"}:
+            priority = 80 if status == "error" else 45
+            title = f"Document needs attention: {item['name']}"
+            summary = str(item["ingest_error"] or "Document ingestion needs review.")
+            actions = [
+                _action("retry", "Retry extraction"),
+                _action("archive", "Archive", style="secondary"),
+                _action(
+                    "remove",
+                    "Remove",
+                    style="secondary",
+                    confirmation="Permanently remove this document from local storage?",
+                ),
+            ]
+        else:
+            priority = 35
+            title = f"Document ingested: {item['name']}"
+            summary = "The document was added to your source-grounded candidate profile."
+            actions = [
+                _action("acknowledge", "Acknowledge"),
+                _action("archive", "Archive", style="secondary"),
+                _action(
+                    "remove",
+                    "Remove",
+                    style="secondary",
+                    confirmation="Permanently remove this document from local storage?",
+                ),
+            ]
+        candidates.append(
+            {
+                "dedupe_key": f"document:{item['id']}:{item['sha256']}",
+                "kind": "document_review",
+                "source_type": "document",
+                "source_id": int(item["id"]),
+                "application_id": None,
+                "priority": priority,
+                "title": title,
+                "summary": summary,
+                "actions": actions,
+                "payload": {
+                    "document_kind": item["kind"],
+                    "ingest_status": status,
+                    "extractor": item["extractor"],
+                    "extraction_confidence": item["extraction_confidence"],
+                    "classification_confidence": item["classification_confidence"],
+                    "content_preview": str(item["content"] or "")[:2_000],
+                    "artifact_url": (
+                        f"/api/documents/artifact?document_id={item['id']}"
+                    ),
+                },
+                "source_updated_at": item["updated_at"],
+            }
+        )
+    return candidates
+
+
 def _candidates() -> list[dict[str, object]]:
     return [
         *_application_candidates(),
         *_browser_candidates(),
         *_outreach_candidates(),
         *_pipeline_candidates(),
+        *_document_candidates(),
     ]
 
 
@@ -350,7 +434,9 @@ def sync_inbox() -> dict[str, int]:
             """
             SELECT id, dedupe_key FROM approval_items
             WHERE status = 'pending'
-              AND source_type IN ('application', 'browser_task', 'outreach', 'pipeline')
+              AND source_type IN (
+                'application', 'browser_task', 'outreach', 'pipeline', 'document'
+              )
             """
         ).fetchall()
         stale_ids = [
@@ -610,6 +696,20 @@ def _dispatch(
         if action == "skip":
             result = orchestration.skip_item(source_id)
             return {"status": result["status"]}
+    elif source_type == "document":
+        if action == "acknowledge":
+            return {"status": "acknowledged"}
+        if action == "approve":
+            result = documents.approve_document(source_id, close_inbox=False)
+            return {"status": result["ingest_status"]}
+        if action == "retry":
+            result = documents.retry_document(source_id, close_inbox=False)
+            return {"status": result["ingest_status"]}
+        if action == "archive":
+            result = documents.archive_document(source_id, close_inbox=False)
+            return {"status": result["ingest_status"]}
+        if action == "remove":
+            return documents.remove_document(source_id, close_inbox=False)
     raise ValueError(f"Action {action} is not supported for this approval item")
 
 

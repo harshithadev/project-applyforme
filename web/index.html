@@ -18,6 +18,7 @@
         </div>
         <nav>
           <button class="nav-item active" data-view="overview">Overview</button>
+          <button class="nav-item" data-view="documents">Documents</button>
           <button class="nav-item" data-view="jobs">Jobs</button>
           <button class="nav-item" data-view="pipeline">Pipeline</button>
           <button class="nav-item nav-item-counted" data-view="approvals">
@@ -91,6 +92,47 @@
               <span>Structured from your source documents</span>
             </div>
             <div id="structuredProfile" class="profile-grid"></div>
+          </section>
+        </section>
+
+        <section id="documents" class="view">
+          <div class="metric-grid document-metrics">
+            <div class="metric"><span>Active</span><strong id="documentActiveCount">0</strong></div>
+            <div class="metric"><span>Review</span><strong id="documentReviewCount">0</strong></div>
+            <div class="metric"><span>Errors</span><strong id="documentErrorCount">0</strong></div>
+            <div class="metric"><span>OCR</span><strong id="documentOcrState">Checking</strong></div>
+          </div>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Document Inbox</h3>
+                <span id="documentWatcherState">Checking folder watcher</span>
+              </div>
+              <button id="documentPickerBtn" type="button">Add documents</button>
+            </div>
+            <form id="documentUploadForm">
+              <input
+                id="documentFileInput"
+                name="documents"
+                type="file"
+                accept=".txt,.md,.tex,.csv,.pdf,.docx"
+                multiple
+                hidden
+              />
+              <label id="documentDropzone" class="document-dropzone" for="documentFileInput">
+                <strong>Choose documents</strong>
+                <span>PDF, DOCX, or text</span>
+              </label>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Managed Documents</h3>
+              <span id="documentInboxMeta"></span>
+            </div>
+            <div id="documentInboxList" class="document-inbox-list"></div>
           </section>
         </section>
 
@@ -260,6 +302,15 @@
                   <option value="true">Enabled</option>
                   <option value="false">Disabled</option>
                 </select>
+              </label>
+              <label>Document review
+                <select name="document_review_mode">
+                  <option value="false">Use extracted evidence immediately</option>
+                  <option value="true">Require approval</option>
+                </select>
+              </label>
+              <label>Document scan interval
+                <input name="document_scan_interval_seconds" type="number" min="5" max="3600" />
               </label>
               <label>Quiet hours start
                 <input name="notification_quiet_start" type="time" />

@@ -620,6 +620,116 @@ main {
   white-space: pre-wrap;
 }
 
+.document-metrics {
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+}
+
+.document-dropzone {
+  min-height: 130px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+  border: 1px dashed #91aaa2;
+  border-radius: 8px;
+  background: #f7faf9;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: center;
+}
+
+.document-dropzone.dragging {
+  border-style: solid;
+  background: #e7f1ed;
+}
+
+.document-dropzone span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.document-inbox-list {
+  display: grid;
+}
+
+.document-row {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+
+.document-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.document-row.error,
+.document-row.duplicate {
+  border-left: 3px solid var(--accent-2);
+  padding-left: 14px;
+}
+
+.document-row.pending_review {
+  border-left: 3px solid #c58b24;
+  padding-left: 14px;
+}
+
+.document-row.archived {
+  opacity: 0.72;
+}
+
+.document-row-head,
+.document-facts {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.document-row-head {
+  align-items: start;
+}
+
+.document-row-head h4,
+.document-row-head p {
+  margin: 0;
+}
+
+.document-row-head p {
+  margin-top: 4px;
+}
+
+.document-facts {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.document-preview {
+  margin: 12px 0;
+  color: var(--muted);
+}
+
+.document-preview summary {
+  cursor: pointer;
+}
+
+.document-preview pre {
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #f4f6f8;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.document-edit {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.6fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .event.error {
   border-color: #e2b8b8;
   background: #fff8f8;
@@ -1136,11 +1246,13 @@ textarea {
 
   .metric-grid,
   .approval-metrics,
+  .document-metrics,
   .pipeline-summary,
   .panel-grid,
   .profile-grid,
   .form-grid,
   .writing-grid,
+  .document-edit,
   .approval-fields,
   .checkpoint-fields,
   .settings-grid {
@@ -1159,6 +1271,7 @@ textarea {
   .pipeline-heading,
   .pipeline-event,
   .approval-heading,
+  .document-row-head,
   .service-details > div:first-child {
     align-items: stretch;
     flex-direction: column;

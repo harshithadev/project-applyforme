@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import threading
 import time
+from email import policy
+from email.parser import BytesParser
 from mimetypes import guess_type
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,6 +15,7 @@ from . import (
     applications,
     automation,
     contact_discovery,
+    documents,
     emailer,
     jobs,
     orchestration,
@@ -66,6 +69,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "email": outreach.status(),
                     "service": service.status(),
                     "approvals": approvals.inbox_state(),
+                    "document_inbox": documents.watcher_status(),
                 }
             )
             return
@@ -75,11 +79,17 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/applications/task-artifact":
             self.send_application_task_artifact()
             return
+        if path == "/api/documents/artifact":
+            self.send_document_artifact()
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
+            if path == "/api/documents/upload":
+                self.json(documents.upload_documents(self.read_multipart_files()))
+                return
             payload = self.read_json()
             if path == "/api/settings":
                 for key, value in payload.items():
@@ -88,6 +98,24 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json({"ok": True})
             elif path == "/api/docs/ingest":
                 self.json(profile.ingest_docs())
+            elif path == "/api/documents/approve":
+                self.json(documents.approve_document(int(payload["document_id"])))
+            elif path == "/api/documents/retry":
+                self.json(documents.retry_document(int(payload["document_id"])))
+            elif path == "/api/documents/update":
+                self.json(
+                    documents.update_document(
+                        int(payload["document_id"]),
+                        name=payload.get("name"),
+                        kind=payload.get("kind"),
+                    )
+                )
+            elif path == "/api/documents/archive":
+                self.json(documents.archive_document(int(payload["document_id"])))
+            elif path == "/api/documents/restore":
+                self.json(documents.restore_document(int(payload["document_id"])))
+            elif path == "/api/documents/remove":
+                self.json(documents.remove_document(int(payload["document_id"])))
             elif path == "/api/jobs/scan":
                 self.json(jobs.discover_jobs())
             elif path == "/api/jobs":
@@ -203,6 +231,40 @@ class Handler(SimpleHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
+    def read_multipart_files(self) -> list[dict[str, object]]:
+        content_type = self.headers.get("Content-Type", "")
+        if "\r" in content_type or "\n" in content_type or "multipart/form-data" not in content_type:
+            raise ValueError("Document uploads require multipart form data")
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            raise ValueError("Document upload is empty")
+        if length > documents.MAX_UPLOAD_REQUEST_BYTES:
+            raise ValueError(
+                f"Upload request exceeds {documents.MAX_UPLOAD_REQUEST_BYTES // 1_000_000} MB"
+            )
+        raw = self.rfile.read(length)
+        message = BytesParser(policy=policy.default).parsebytes(
+            (
+                f"Content-Type: {content_type}\r\n"
+                "MIME-Version: 1.0\r\n\r\n"
+            ).encode("ascii")
+            + raw
+        )
+        if not message.is_multipart():
+            raise ValueError("Could not parse multipart document upload")
+        files: list[dict[str, object]] = []
+        for part in message.iter_parts():
+            filename = part.get_filename()
+            if not filename:
+                continue
+            files.append(
+                {
+                    "name": filename,
+                    "content": part.get_payload(decode=True) or b"",
+                }
+            )
+        return files
+
     def json(self, payload: object, status: int = 200) -> None:
         data = json.dumps(payload, indent=2, default=str).encode("utf-8")
         self.send_response(status)
@@ -276,6 +338,40 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_document_artifact(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            document_id = int(query.get("document_id", [""])[0])
+        except ValueError:
+            self.send_error(400, "Invalid document ID")
+            return
+        try:
+            document, artifact = documents.document_artifact(document_id)
+        except ValueError:
+            self.send_error(404, "Document not found")
+            return
+        data = artifact.read_bytes()
+        content_type = guess_type(artifact.name)[0] or "application/octet-stream"
+        inline_types = {
+            ".pdf",
+            ".txt",
+            ".md",
+            ".tex",
+            ".csv",
+        }
+        disposition = "inline" if artifact.suffix.lower() in inline_types else "attachment"
+        download_name = Path(str(document["name"])).name.replace('"', "'").replace("\r", "").replace("\n", "")
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header(
+            "Content-Disposition",
+            f'{disposition}; filename="{download_name}"',
+        )
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+
 
 def restart_background_service() -> None:
     time.sleep(0.5)
@@ -287,6 +383,7 @@ def restart_background_service() -> None:
 
 def main() -> None:
     init_db()
+    documents.start_watcher()
     start_background_scanner()
     writing.start_writing_worker()
     outreach.start_worker()

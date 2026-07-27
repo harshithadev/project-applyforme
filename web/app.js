@@ -27,6 +27,26 @@ async function api(path, options = {}) {
   return data;
 }
 
+async function uploadDocuments(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const form = new FormData();
+  files.forEach((file) => form.append("documents", file, file.name));
+  const response = await fetch("/api/documents/upload", {
+    method: "POST",
+    body: form
+  });
+  const result = await response.json();
+  if (!response.ok || result.ok === false) {
+    throw new Error(result.error || response.statusText);
+  }
+  const parts = [`${Number(result.saved || 0)} saved`];
+  if (result.duplicates) parts.push(`${Number(result.duplicates)} duplicate`);
+  if (result.rejected) parts.push(`${Number(result.rejected)} rejected`);
+  toast(`Document upload: ${parts.join(", ")}.`);
+  await loadState();
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -89,6 +109,7 @@ function render() {
   $("#jobQueueMeta").textContent = `${data.jobs.length} tracked`;
 
   renderDocs(data.profile.documents);
+  renderDocumentInbox(data.profile.documents, data.document_inbox || {});
   renderStructuredProfile(data.profile.structured || {});
   renderEvents("#recentEvents", data.events.slice(0, 8));
   renderEvents("#logsList", data.events);
@@ -145,6 +166,84 @@ function renderDocs(docs) {
       <p class="meta">${escapeHtml(doc.extractor || "unknown extractor")} · ${Number(doc.size_bytes || 0).toLocaleString()} bytes</p>
     </div>
   `).join("");
+}
+
+function renderDocumentInbox(docs, inbox) {
+  const active = docs.filter((doc) => doc.ingest_status !== "archived");
+  const pending = docs.filter((doc) => doc.ingest_status === "pending_review");
+  const errors = docs.filter((doc) => ["error", "duplicate"].includes(doc.ingest_status));
+  const ocr = inbox.ocr || {};
+  $("#documentActiveCount").textContent = active.length;
+  $("#documentReviewCount").textContent = pending.length;
+  $("#documentErrorCount").textContent = errors.length;
+  $("#documentOcrState").textContent = ocr.available ? "Ready" : "Unavailable";
+  $("#documentWatcherState").textContent = inbox.running
+    ? `Watching every ${Number(inbox.interval_seconds || 15)} seconds`
+    : "Watcher stopped";
+  $("#documentInboxMeta").textContent = `${docs.length} managed`;
+
+  const target = $("#documentInboxList");
+  if (!docs.length) {
+    target.innerHTML = `<div class="empty">No managed documents.</div>`;
+    return;
+  }
+  const kinds = [
+    ["resume", "Resume"],
+    ["transcript", "Transcript"],
+    ["cover_letter", "Cover letter"],
+    ["portfolio", "Portfolio"],
+    ["work_authorization", "Work authorization"],
+    ["certification", "Certification"],
+    ["source", "Other source"]
+  ];
+  target.innerHTML = docs.map((doc) => {
+    const status = String(doc.ingest_status || "error");
+    const confidence = Number(doc.extraction_confidence || 0);
+    const classification = Number(doc.classification_confidence || 0);
+    const archived = status === "archived";
+    const artifactUrl = `/api/documents/artifact?document_id=${encodeURIComponent(doc.id)}`;
+    const kindOptions = kinds.map(([value, label]) =>
+      `<option value="${value}" ${value === doc.kind ? "selected" : ""}>${label}</option>`
+    ).join("");
+    return `
+      <article class="document-row ${escapeHtml(status)}">
+        <div class="document-row-head">
+          <div>
+            <h4>${escapeHtml(doc.name)}</h4>
+            <p class="meta">${escapeHtml(doc.source || "folder")} · ${escapeHtml(doc.extractor || "not extracted")} · ${formatBytes(doc.size_bytes)}</p>
+          </div>
+          <span class="status">${escapeHtml(formatMode(status))}</span>
+        </div>
+        ${doc.ingest_error ? `<p class="error-text">${escapeHtml(doc.ingest_error)}</p>` : ""}
+        <div class="document-facts">
+          <span>Extraction ${Math.round(confidence * 100)}%</span>
+          <span>Classification ${Math.round(classification * 100)}%</span>
+          <span>${escapeHtml(doc.updated_at)}</span>
+        </div>
+        ${doc.content_preview
+          ? `<details class="document-preview"><summary>Extracted text</summary><pre>${escapeHtml(doc.content_preview)}</pre></details>`
+          : ""}
+        <div class="document-edit">
+          <label>Filename
+            <input data-document-name value="${escapeHtml(doc.name)}" ${archived ? "disabled" : ""} />
+          </label>
+          <label>Classification
+            <select data-document-kind ${archived ? "disabled" : ""}>${kindOptions}</select>
+          </label>
+        </div>
+        <div class="card-actions">
+          <a class="button-link secondary" href="${artifactUrl}" target="_blank" rel="noreferrer">Open file</a>
+          ${!archived ? `<button data-action="document-update" data-document="${doc.id}" class="secondary">Save details</button>` : ""}
+          ${status === "pending_review" ? `<button data-action="document-approve" data-document="${doc.id}">Approve evidence</button>` : ""}
+          ${["error", "duplicate"].includes(status) ? `<button data-action="document-retry" data-document="${doc.id}">Retry</button>` : ""}
+          ${archived
+            ? `<button data-action="document-restore" data-document="${doc.id}">Restore</button>`
+            : `<button data-action="document-archive" data-document="${doc.id}" class="secondary">Archive</button>`}
+          <button data-action="document-remove" data-document="${doc.id}" class="secondary">Remove</button>
+        </div>
+      </article>
+    `;
+  }).join("");
 }
 
 function renderStructuredProfile(profile) {
@@ -359,6 +458,8 @@ function renderApprovals(inbox) {
       }).join("");
       const artifactLink = payload.resume_url
         ? `<a class="button-link secondary" href="${escapeHtml(payload.resume_url)}" target="_blank" rel="noreferrer">Open tailored resume</a>`
+        : payload.artifact_url
+          ? `<a class="button-link secondary" href="${escapeHtml(payload.artifact_url)}" target="_blank" rel="noreferrer">Open document</a>`
         : "";
       const screenshot = payload.screenshot_url
         ? `<a class="approval-screenshot" href="${escapeHtml(payload.screenshot_url)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(payload.screenshot_url)}" alt="Browser checkpoint screenshot" /></a>`
@@ -371,6 +472,12 @@ function renderApprovals(inbox) {
             <summary>Message preview</summary>
             <strong>${escapeHtml(payload.subject || "")}</strong>
             <pre>${escapeHtml(payload.body || "")}</pre>
+          </details>`
+        : "";
+      const documentPreview = payload.content_preview
+        ? `<details class="approval-preview">
+            <summary>Extracted text</summary>
+            <pre>${escapeHtml(payload.content_preview)}</pre>
           </details>`
         : "";
       return `
@@ -386,6 +493,7 @@ function renderApprovals(inbox) {
           ${screenshot}
           ${answerFields ? `<div class="approval-fields">${answerFields}</div>` : ""}
           ${outreachPreview}
+          ${documentPreview}
           <label class="approval-note">Decision note
             <input data-approval-note placeholder="Optional" />
           </label>
@@ -825,6 +933,7 @@ function setView(view) {
   $$(".nav-item").forEach((el) => el.classList.toggle("active", el.dataset.view === view));
   const titles = {
     overview: ["Overview", "Track documents, jobs, applications, and agent actions."],
+    documents: ["Documents", "Manage source files, extraction review, OCR, and profile evidence."],
     jobs: ["Jobs", "Add postings, scan configured career pages, and draft packages."],
     pipeline: ["Pipeline", "Track automatic preparation, review, and guarded browser work."],
     approvals: ["Approvals", "Review packages, browser checkpoints, outreach, and failures in one queue."],
@@ -858,6 +967,48 @@ async function handleAction(action, button) {
         })
       });
       toast(`Decision recorded: ${formatMode(result.item.resolution)}.`);
+    } else if (action === "document-update") {
+      const item = button.closest(".document-row");
+      const result = await api("/api/documents/update", {
+        method: "POST",
+        body: JSON.stringify({
+          document_id: Number(button.dataset.document),
+          name: item.querySelector("[data-document-name]").value,
+          kind: item.querySelector("[data-document-kind]").value
+        })
+      });
+      toast(`Updated ${result.name}.`);
+    } else if (action === "document-approve") {
+      await api("/api/documents/approve", {
+        method: "POST",
+        body: JSON.stringify({ document_id: Number(button.dataset.document) })
+      });
+      toast("Document evidence approved.");
+    } else if (action === "document-retry") {
+      const result = await api("/api/documents/retry", {
+        method: "POST",
+        body: JSON.stringify({ document_id: Number(button.dataset.document) })
+      });
+      toast(`Document extraction status: ${formatMode(result.ingest_status)}.`);
+    } else if (action === "document-archive") {
+      await api("/api/documents/archive", {
+        method: "POST",
+        body: JSON.stringify({ document_id: Number(button.dataset.document) })
+      });
+      toast("Document archived.");
+    } else if (action === "document-restore") {
+      await api("/api/documents/restore", {
+        method: "POST",
+        body: JSON.stringify({ document_id: Number(button.dataset.document) })
+      });
+      toast("Document restored.");
+    } else if (action === "document-remove") {
+      if (!window.confirm("Permanently remove this document from local storage?")) return;
+      await api("/api/documents/remove", {
+        method: "POST",
+        body: JSON.stringify({ document_id: Number(button.dataset.document) })
+      });
+      toast("Document removed.");
     } else if (action === "draft") {
       await api("/api/applications/draft", {
         method: "POST",
@@ -1008,6 +1159,39 @@ function bindEvents() {
   });
 
   $("#refreshBtn").addEventListener("click", loadState);
+
+  $("#documentPickerBtn").addEventListener("click", () => $("#documentFileInput").click());
+
+  $("#documentFileInput").addEventListener("change", async (event) => {
+    try {
+      await uploadDocuments(event.currentTarget.files);
+      event.currentTarget.value = "";
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+
+  const dropzone = $("#documentDropzone");
+  ["dragenter", "dragover"].forEach((name) => {
+    dropzone.addEventListener(name, (event) => {
+      event.preventDefault();
+      dropzone.classList.add("dragging");
+    });
+  });
+  ["dragleave", "drop"].forEach((name) => {
+    dropzone.addEventListener(name, (event) => {
+      event.preventDefault();
+      dropzone.classList.remove("dragging");
+    });
+  });
+  dropzone.addEventListener("drop", async (event) => {
+    try {
+      await uploadDocuments(event.dataTransfer.files);
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  $("#documentUploadForm").addEventListener("submit", (event) => event.preventDefault());
 
   $("#ingestBtn").addEventListener("click", async () => {
     await api("/api/docs/ingest", { method: "POST", body: "{}" });

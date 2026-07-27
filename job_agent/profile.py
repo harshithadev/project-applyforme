@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
 from .config import DOCS_DIR, SUPPORTED_DOC_EXTENSIONS
-from .db import connect, log, now_iso, row, rows
+from .db import connect, log, now_iso, row, rows, setting
 from .document_readers import DocumentExtraction, document_kind, read_document
 
 
@@ -66,6 +67,8 @@ SKILLS = (
     "CI/CD",
 )
 
+_ingest_lock = threading.RLock()
+
 
 def _summary(content: str) -> str:
     compact = " ".join(content.split())
@@ -117,7 +120,7 @@ def build_structured_profile(documents: list[dict[str, Any]]) -> dict[str, objec
         30,
     )
     return {
-        "version": 1,
+        "version": 2,
         "name": _candidate_name(documents),
         "contact": {
             "emails": _unique(EMAIL_PATTERN.findall(combined), 5),
@@ -133,6 +136,9 @@ def build_structured_profile(documents: list[dict[str, Any]]) -> dict[str, objec
                 "document_id": document["id"],
                 "name": document["name"],
                 "kind": document["kind"],
+                "source": document.get("source", "folder"),
+                "extraction_confidence": float(document.get("extraction_confidence") or 0),
+                "classification_confidence": float(document.get("classification_confidence") or 0),
             }
             for document in documents
         ],
@@ -142,7 +148,13 @@ def build_structured_profile(documents: list[dict[str, Any]]) -> dict[str, objec
 
 def _rebuild_structured_profile(conn: Any) -> dict[str, object]:
     documents = [dict(item) for item in conn.execute(
-        "SELECT id, name, kind, content FROM documents WHERE ingest_status = 'ready' ORDER BY name"
+        """
+        SELECT id, name, kind, content, source, extraction_confidence,
+               classification_confidence
+        FROM documents
+        WHERE ingest_status = 'ready'
+        ORDER BY name
+        """
     ).fetchall()]
     structured = build_structured_profile(documents)
     conn.execute(
@@ -155,87 +167,168 @@ def _rebuild_structured_profile(conn: Any) -> dict[str, object]:
     return structured
 
 
-def ingest_docs() -> dict[str, int]:
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    result = {"ingested": 0, "unchanged": 0, "skipped": 0, "failed": 0, "removed": 0}
-    active_paths: set[str] = set()
+def rebuild_structured_profile() -> dict[str, object]:
     with connect() as conn:
-        for path in sorted(DOCS_DIR.iterdir()):
-            if not path.is_file() or path.name.startswith("."):
-                continue
-            if path.suffix.lower() not in SUPPORTED_DOC_EXTENSIONS:
-                result["skipped"] += 1
-                continue
-            path_string = str(path.resolve())
-            active_paths.add(path_string)
-            try:
-                file_bytes = path.read_bytes()
-                digest = hashlib.sha256(file_bytes).hexdigest()
-                size_bytes = len(file_bytes)
-            except OSError as exc:
-                digest = ""
-                size_bytes = 0
-                extraction = DocumentExtraction(supported=True, error=f"Could not read document: {exc}")
-            else:
+        return _rebuild_structured_profile(conn)
+
+
+def ingest_docs() -> dict[str, int]:
+    with _ingest_lock:
+        DOCS_DIR.mkdir(parents=True, exist_ok=True)
+        result = {
+            "ingested": 0,
+            "pending_review": 0,
+            "duplicates": 0,
+            "unchanged": 0,
+            "skipped": 0,
+            "failed": 0,
+            "removed": 0,
+        }
+        active_paths: set[str] = set()
+        review_mode = setting("document_review_mode", "false") == "true"
+        with connect() as conn:
+            for path in sorted(DOCS_DIR.iterdir()):
+                if not path.is_file() or path.name.startswith("."):
+                    continue
+                if path.suffix.lower() not in SUPPORTED_DOC_EXTENSIONS:
+                    result["skipped"] += 1
+                    continue
+                path_string = str(path.resolve())
+                active_paths.add(path_string)
                 current = conn.execute(
-                    "SELECT sha256, ingest_status FROM documents WHERE path = ?",
+                    """
+                    SELECT sha256, ingest_status, review_status, source, created_at
+                    FROM documents WHERE path = ?
+                    """,
                     (path_string,),
                 ).fetchone()
-                if current and current["sha256"] == digest and current["ingest_status"] == "ready":
-                    result["unchanged"] += 1
-                    continue
-                extraction = read_document(path)
-            status = "ready" if extraction.content else "error"
-            if status == "ready":
-                result["ingested"] += 1
-            else:
-                result["failed"] += 1
-            conn.execute(
-                """
-                INSERT INTO documents(
-                  path, name, kind, content, summary, sha256, extractor, ingest_status,
-                  ingest_error, size_bytes, metadata, updated_at
+                try:
+                    file_bytes = path.read_bytes()
+                    digest = hashlib.sha256(file_bytes).hexdigest()
+                    size_bytes = len(file_bytes)
+                except OSError as exc:
+                    digest = ""
+                    size_bytes = 0
+                    extraction = DocumentExtraction(
+                        supported=True,
+                        error=f"Could not read document: {exc}",
+                    )
+                else:
+                    if (
+                        current
+                        and current["sha256"] == digest
+                        and current["ingest_status"]
+                        in {"ready", "pending_review"}
+                    ):
+                        result["unchanged"] += 1
+                        continue
+                    duplicate = conn.execute(
+                        """
+                        SELECT id, name, path FROM documents
+                        WHERE sha256 = ? AND path <> ?
+                          AND ingest_status IN ('ready', 'pending_review', 'archived')
+                        ORDER BY id LIMIT 1
+                        """,
+                        (digest, path_string),
+                    ).fetchone()
+                    if duplicate:
+                        extraction = DocumentExtraction(
+                            supported=True,
+                            error=f"Duplicate of {duplicate['name']}.",
+                            metadata={
+                                "duplicate_of_document_id": int(duplicate["id"]),
+                                "duplicate_of_path": duplicate["path"],
+                            },
+                        )
+                    else:
+                        extraction = read_document(path)
+                kind = document_kind(path)
+                classification_confidence = 0.95 if kind != "source" else 0.35
+                metadata = dict(extraction.metadata)
+                metadata["classification"] = {
+                    "kind": kind,
+                    "confidence": classification_confidence,
+                    "method": "filename",
+                }
+                duplicate_of = metadata.get("duplicate_of_document_id")
+                if duplicate_of:
+                    status = "duplicate"
+                    review_status = "duplicate"
+                    result["duplicates"] += 1
+                elif extraction.content:
+                    status = "pending_review" if review_mode else "ready"
+                    review_status = "pending" if review_mode else "approved"
+                    result["pending_review" if review_mode else "ingested"] += 1
+                else:
+                    status = "error"
+                    review_status = "error"
+                    result["failed"] += 1
+                timestamp = now_iso()
+                conn.execute(
+                    """
+                    INSERT INTO documents(
+                      path, name, kind, content, summary, sha256, extractor,
+                      ingest_status, ingest_error, size_bytes, metadata, source,
+                      review_status, extraction_confidence,
+                      classification_confidence, created_at, archived_at, updated_at
+                    )
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
+                    ON CONFLICT(path) DO UPDATE SET
+                      name = excluded.name,
+                      kind = excluded.kind,
+                      content = excluded.content,
+                      summary = excluded.summary,
+                      sha256 = excluded.sha256,
+                      extractor = excluded.extractor,
+                      ingest_status = excluded.ingest_status,
+                      ingest_error = excluded.ingest_error,
+                      size_bytes = excluded.size_bytes,
+                      metadata = excluded.metadata,
+                      review_status = excluded.review_status,
+                      extraction_confidence = excluded.extraction_confidence,
+                      classification_confidence = excluded.classification_confidence,
+                      archived_at = '',
+                      updated_at = excluded.updated_at
+                    """,
+                    (
+                        path_string,
+                        path.name,
+                        kind,
+                        extraction.content,
+                        _summary(extraction.content),
+                        digest,
+                        extraction.extractor,
+                        status,
+                        extraction.error,
+                        size_bytes,
+                        json.dumps(metadata),
+                        str(current["source"]) if current else "folder",
+                        review_status,
+                        float(metadata.get("extraction_confidence") or 0),
+                        classification_confidence,
+                        str(current["created_at"]) if current and current["created_at"] else timestamp,
+                        timestamp,
+                    ),
                 )
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(path) DO UPDATE SET
-                  name = excluded.name,
-                  kind = excluded.kind,
-                  content = excluded.content,
-                  summary = excluded.summary,
-                  sha256 = excluded.sha256,
-                  extractor = excluded.extractor,
-                  ingest_status = excluded.ingest_status,
-                  ingest_error = excluded.ingest_error,
-                  size_bytes = excluded.size_bytes,
-                  metadata = excluded.metadata,
-                  updated_at = excluded.updated_at
-                """,
-                (
-                    path_string,
-                    path.name,
-                    document_kind(path),
-                    extraction.content,
-                    _summary(extraction.content),
-                    digest,
-                    extraction.extractor,
-                    status,
-                    extraction.error,
-                    size_bytes,
-                    json.dumps(extraction.metadata),
-                    now_iso(),
-                ),
-            )
-        stored = conn.execute("SELECT id, path FROM documents").fetchall()
-        for document in stored:
-            if document["path"] not in active_paths:
-                conn.execute("DELETE FROM documents WHERE id = ?", (document["id"],))
-                result["removed"] += 1
-        _rebuild_structured_profile(conn)
-    log(
-        f"Document ingestion complete: {result['ingested']} updated, {result['unchanged']} unchanged, "
-        f"{result['failed']} failed.",
-        meta=result,
-    )
+            stored = conn.execute(
+                "SELECT id, path FROM documents WHERE ingest_status <> 'archived'"
+            ).fetchall()
+            for document in stored:
+                if document["path"] not in active_paths:
+                    conn.execute("DELETE FROM documents WHERE id = ?", (document["id"],))
+                    result["removed"] += 1
+            _rebuild_structured_profile(conn)
+    if any(
+        result[key]
+        for key in ("ingested", "pending_review", "duplicates", "failed", "removed")
+    ):
+        log(
+            f"Document ingestion complete: {result['ingested']} updated, "
+            f"{result['pending_review']} awaiting review, "
+            f"{result['duplicates']} duplicate, {result['failed']} failed, "
+            f"{result['removed']} removed.",
+            meta=result,
+        )
     return result
 
 
@@ -262,7 +355,9 @@ def profile_overview() -> dict[str, object]:
     documents = rows(
         """
         SELECT id, name, path, kind, summary, extractor, ingest_status, ingest_error,
-               size_bytes, metadata, updated_at
+               size_bytes, metadata, source, review_status, extraction_confidence,
+               classification_confidence, created_at, archived_at, updated_at,
+               substr(content, 1, 4000) AS content_preview
         FROM documents
         ORDER BY name
         """
