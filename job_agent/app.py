@@ -14,6 +14,7 @@ from . import (
     approvals,
     applications,
     automation,
+    browser_diagnostics,
     browser_sessions,
     contact_discovery,
     documents,
@@ -67,6 +68,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "paths": db_info(),
                     "latex_engine": available_latex_engine(),
                     "automation": automation.automation_status(),
+                    "browser_diagnostics": browser_diagnostics.dashboard_state(),
                     "browser_sessions": browser_sessions.list_sessions(),
                     "codex": writing.codex_status(),
                     "email": outreach.status(),
@@ -82,6 +84,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/applications/task-artifact":
             self.send_application_task_artifact()
+            return
+        if path == "/api/applications/task-diagnostic":
+            self.send_application_task_diagnostic()
             return
         if path == "/api/documents/artifact":
             self.send_document_artifact()
@@ -384,6 +389,39 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "image/png")
         self.send_header("Content-Disposition", f'inline; filename="{name}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_application_task_diagnostic(self) -> None:
+        query = parse_qs(urlparse(self.path).query)
+        try:
+            bundle_id = int(query.get("bundle_id", [""])[0])
+        except ValueError:
+            self.send_error(400, "Invalid diagnostic bundle ID")
+            return
+        bundle = browser_diagnostics.bundle_artifact(bundle_id)
+        if not bundle:
+            self.send_error(404, "Diagnostic bundle not found")
+            return
+        artifact = Path(str(bundle.get("artifact_path") or "")).resolve()
+        generated_root = (GENERATED_DIR / "browser" / "tasks").resolve()
+        if (
+            generated_root not in artifact.parents
+            or not artifact.is_file()
+            or artifact.suffix.lower() != ".json"
+            or artifact.name != f"diagnostic-{bundle_id}.json"
+        ):
+            self.send_error(404, "Diagnostic bundle not found")
+            return
+        data = artifact.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header(
+            "Content-Disposition",
+            f'attachment; filename="browser-diagnostic-{bundle_id}.json"',
+        )
         self.send_header("Content-Length", str(len(data)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()

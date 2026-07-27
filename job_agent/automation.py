@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import browser_sessions
+from . import browser_diagnostics, browser_sessions
 from .config import GENERATED_DIR
 from .db import connect, log, now_iso, row, rows, setting
 from .latex import application_dir
@@ -80,6 +80,7 @@ def _task_dict(task: dict[str, Any]) -> dict[str, Any]:
     task["browser_session"] = (
         browser_sessions.get_session(session_id) if session_id else None
     )
+    task["diagnostics"] = browser_diagnostics.list_for_task(int(task["id"]))
     return task
 
 
@@ -637,6 +638,53 @@ def _checkpoint(
     }
 
 
+def _page_checkpoint(
+    page: Any,
+    telemetry: dict[str, list[dict[str, str]]],
+    kind: str,
+    message: str,
+    fields: list[dict[str, Any]] | None = None,
+    diagnostic_controls: list[dict[str, Any]] | None = None,
+    **extra: object,
+) -> dict[str, Any]:
+    outcome = _checkpoint(kind, message, fields, **extra)
+    outcome["diagnostic"] = browser_diagnostics.capture_page_snapshot(
+        page,
+        diagnostic_controls,
+        telemetry,
+        str(extra.get("screenshot") or ""),
+    )
+    return outcome
+
+
+def _record_diagnostic_safely(
+    task: dict[str, Any],
+    *,
+    status: str,
+    checkpoint_kind: str,
+    message: str,
+    snapshot: dict[str, object] | None = None,
+    manual: bool = False,
+    count_attempt: bool = True,
+) -> None:
+    try:
+        browser_diagnostics.record_outcome(
+            task,
+            status=status,
+            checkpoint_kind=checkpoint_kind,
+            message=message,
+            snapshot=snapshot,
+            manual=manual,
+            count_attempt=count_attempt,
+        )
+    except Exception as exc:
+        log(
+            f"Browser diagnostics could not be saved: {exc}",
+            "warning",
+            {"application_task_id": int(task["id"])},
+        )
+
+
 def _fill_application_step(
     page: Any,
     surface: Any,
@@ -783,25 +831,32 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
             raise
         try:
             page = context.pages[0] if context.pages else context.new_page()
+            telemetry = browser_diagnostics.attach_telemetry(page)
             navigation_url = str(task.get("resume_url") or task["target_url"])
             page.goto(navigation_url, wait_until="domcontentloaded", timeout=45_000)
             _save_screenshot(page, task, "01-opened")
             if _page_has_captcha(page):
-                return _checkpoint(
+                return _page_checkpoint(
+                    page,
+                    telemetry,
                     "captcha",
                     "The site presented a CAPTCHA. Automation stopped without attempting to bypass it.",
                     target_url=task["target_url"],
                 )
             surface = _open_application_form(page, str(task["adapter"]), task_id)
             if _page_has_captcha(page):
-                return _checkpoint(
+                return _page_checkpoint(
+                    page,
+                    telemetry,
                     "captcha",
                     "The application form presented a CAPTCHA. Automation stopped without attempting to bypass it.",
                     target_url=page.url,
                 )
             if _page_requires_login(surface):
                 browser_sessions.mark_needs_login(session_id, task_id)
-                return _checkpoint(
+                return _page_checkpoint(
+                    page,
+                    telemetry,
                     "login",
                     "The application requires a login. Open the guided sign-in window to continue with this saved session.",
                     target_url=page.url,
@@ -812,7 +867,9 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
             for step_number in range(1, MAX_FORM_STEPS + 1):
                 surface = _find_form_surface(page)
                 if _page_has_captcha(page):
-                    return _checkpoint(
+                    return _page_checkpoint(
+                        page,
+                        telemetry,
                         "captcha",
                         "The application presented a CAPTCHA. Automation stopped without attempting to bypass it.",
                         target_url=page.url,
@@ -820,7 +877,9 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                     )
                 if _page_requires_login(surface):
                     browser_sessions.mark_needs_login(session_id, task_id)
-                    return _checkpoint(
+                    return _page_checkpoint(
+                        page,
+                        telemetry,
                         "login",
                         "The application requires a login. Open the guided sign-in window to continue with this saved session.",
                         target_url=page.url,
@@ -847,6 +906,12 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                         (json.dumps(all_snapshots), now_iso(), task_id),
                     )
                 if checkpoint:
+                    checkpoint["diagnostic"] = browser_diagnostics.capture_page_snapshot(
+                        page,
+                        snapshot,
+                        telemetry,
+                        screenshot,
+                    )
                     return checkpoint
 
                 submit = _submit_locator(surface, str(task["adapter"]))
@@ -855,9 +920,12 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                     autonomous = task["mode"] == "rules_autonomous" and submit_enabled
                     explicitly_approved = bool(task.get("final_submit_approved"))
                     if not autonomous and not explicitly_approved:
-                        return _checkpoint(
+                        return _page_checkpoint(
+                            page,
+                            telemetry,
                             "final_review",
                             "The form is filled and ready. Review the screenshot, then explicitly approve final submission.",
+                            diagnostic_controls=snapshot,
                             screenshot=screenshot,
                             target_url=page.url,
                             step=step_number,
@@ -865,9 +933,12 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                     limit = int(setting("daily_application_limit", "10") or "10")
                     count = submitted_today_count()
                     if count >= limit:
-                        return _checkpoint(
+                        return _page_checkpoint(
+                            page,
+                            telemetry,
                             "daily_limit",
                             f"Final submission stopped because the daily limit was reached ({count}/{limit}).",
+                            diagnostic_controls=snapshot,
                         )
                     _record_task_event(
                         task_id,
@@ -887,17 +958,27 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                     confirmation = _confirmation_text(page)
                     final_screenshot = _save_screenshot(page, task, "03-submitted")
                     if not SUCCESS_PATTERNS.search(confirmation):
-                        return _checkpoint(
+                        return _page_checkpoint(
+                            page,
+                            telemetry,
                             "submission_uncertain",
                             "The submit control was clicked, but a confirmation could not be verified. Check the site before retrying.",
+                            diagnostic_controls=snapshot,
                             screenshot=final_screenshot,
                             target_url=page.url,
                         )
-                    return {
+                    outcome = {
                         "status": "submitted",
                         "message": "The application was submitted and the confirmation page was verified.",
                         "result": {"confirmation_url": page.url, "screenshot": final_screenshot},
                     }
+                    outcome["diagnostic"] = browser_diagnostics.capture_page_snapshot(
+                        page,
+                        snapshot,
+                        telemetry,
+                        final_screenshot,
+                    )
+                    return outcome
 
                 continue_control = _continue_locator(surface, str(task["adapter"]))
                 if continue_control is not None and continue_control.count():
@@ -909,25 +990,46 @@ def _run_browser_task(task: dict[str, Any], app: dict[str, Any]) -> dict[str, An
                     _click_and_settle(page, continue_control)
                     continue
                 if not all_snapshots:
-                    return _checkpoint(
+                    return _page_checkpoint(
+                        page,
+                        telemetry,
                         "unsupported_form",
                         "No supported application fields were detected. Open this form for manual submission.",
+                        diagnostic_controls=snapshot,
                         screenshot=screenshot,
                         target_url=page.url,
                     )
-                return _checkpoint(
+                return _page_checkpoint(
+                    page,
+                    telemetry,
                     "submit_control",
                     "The visible form step was filled, but no supported next or final submit control was found.",
+                    diagnostic_controls=snapshot,
                     screenshot=screenshot,
                     target_url=page.url,
                     step=step_number,
                 )
-            return _checkpoint(
+            return _page_checkpoint(
+                page,
+                telemetry,
                 "step_limit",
                 f"Automation stopped after {MAX_FORM_STEPS} application steps to prevent an unbounded workflow.",
+                diagnostic_controls=all_snapshots,
                 target_url=page.url,
             )
         except Exception as exc:
+            try:
+                setattr(
+                    exc,
+                    "browser_diagnostic",
+                    browser_diagnostics.capture_page_snapshot(
+                        page,
+                        locals().get("all_snapshots", []),
+                        locals().get("telemetry", {}),
+                    ),
+                )
+            except Exception:
+                pass
             browser_sessions.finish_automation(session_id, error=str(exc))
             raise
         finally:
@@ -945,6 +1047,10 @@ def process_next_task(
         return None
     task_id = int(task["id"])
     application_id = int(task["application_id"])
+    diagnostic_status = "failed"
+    diagnostic_kind = ""
+    diagnostic_message = ""
+    diagnostic_snapshot: dict[str, object] | None = None
     _record_task_event(task_id, "starting", "The background application worker claimed this task.")
     try:
         app = _application_record(application_id)
@@ -963,6 +1069,14 @@ def process_next_task(
             outcome = (runner or _run_browser_task)(task, app)
         status = str(outcome.get("status") or "failed")
         message = str(outcome.get("message") or "Browser application task finished.")
+        diagnostic_status = status
+        diagnostic_kind = str(outcome.get("checkpoint_kind") or "")
+        diagnostic_message = message
+        diagnostic_snapshot = (
+            outcome.get("diagnostic")
+            if isinstance(outcome.get("diagnostic"), dict)
+            else None
+        )
         if status == "submitted":
             from .applications import mark_application_submitted
 
@@ -1019,6 +1133,14 @@ def process_next_task(
             if submit_started
             else f"Browser application task failed: {exc}"
         )
+        diagnostic_status = status
+        diagnostic_kind = kind
+        diagnostic_message = message
+        diagnostic_snapshot = (
+            getattr(exc, "browser_diagnostic", None)
+            if isinstance(getattr(exc, "browser_diagnostic", None), dict)
+            else None
+        )
         with connect() as conn:
             conn.execute(
                 """
@@ -1045,6 +1167,13 @@ def process_next_task(
             "error",
             {"kind": kind} if kind else {},
         )
+    _record_diagnostic_safely(
+        task,
+        status=diagnostic_status,
+        checkpoint_kind=diagnostic_kind,
+        message=diagnostic_message,
+        snapshot=diagnostic_snapshot,
+    )
     return get_task(task_id)
 
 
@@ -1227,6 +1356,15 @@ def complete_manual_submission(
         "submitted",
         message,
         meta={"confirmation_url": confirmation_url, "screenshot": screenshot},
+    )
+    _record_diagnostic_safely(
+        task,
+        status="submitted",
+        checkpoint_kind="",
+        message=message,
+        snapshot={"url": confirmation_url, "screenshot": screenshot},
+        manual=True,
+        count_attempt=False,
     )
     return get_task(task_id) or {}
 

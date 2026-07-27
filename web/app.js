@@ -124,6 +124,7 @@ function render() {
     data.browser_sessions || [],
     data.automation?.sessions || {}
   );
+  renderAdapterHealth(data.browser_diagnostics || {});
   renderOutreach(
     data.outreach || [],
     data.contacts || [],
@@ -611,6 +612,7 @@ function renderBrowserTask(task) {
   const handoffOwned = Number(session.active_task_id || 0) === Number(task.id);
   const manualTakeover = takeoverKinds.includes(task.checkpoint_kind);
   const latestScreenshot = (task.screenshots || []).at(-1);
+  const latestDiagnostic = (task.diagnostics || [])[0] || {};
   const screenshotUrl = latestScreenshot
     ? `/api/applications/task-artifact?task_id=${encodeURIComponent(task.id)}&name=${encodeURIComponent(latestScreenshot)}`
     : "";
@@ -658,6 +660,21 @@ function renderBrowserTask(task) {
         </div>
       ` : ""}
       ${screenshotUrl ? `<a class="task-screenshot" href="${screenshotUrl}" target="_blank" rel="noreferrer"><img src="${screenshotUrl}" alt="Latest browser task screenshot" /></a>` : ""}
+      ${latestDiagnostic.id ? `
+        <details class="task-diagnostic">
+          <summary>
+            ${escapeHtml(formatMode(latestDiagnostic.category || "diagnostic"))}
+            · ${escapeHtml(formatMode(latestDiagnostic.severity || "info"))}
+          </summary>
+          <p>${escapeHtml(latestDiagnostic.recommendation || "Review the browser task details before retrying.")}</p>
+          <div class="diagnostic-meta">
+            <span>${latestDiagnostic.retryable ? "Retry supported" : "Manual verification required"}</span>
+            ${latestDiagnostic.download_available
+              ? `<a href="/api/applications/task-diagnostic?bundle_id=${encodeURIComponent(latestDiagnostic.id)}">Download sanitized bundle</a>`
+              : ""}
+          </div>
+        </details>
+      ` : ""}
       ${answerFields ? `<div class="checkpoint-fields">${answerFields}</div>` : ""}
       <div class="card-actions">
         ${task.status === "checkpoint" && task.checkpoint_kind === "final_review"
@@ -739,6 +756,31 @@ function renderBrowserSessions(sessions, summary) {
         </div>
       `).join("")
     : `<div class="empty">No ATS browser sessions have been created.</div>`;
+}
+
+function renderAdapterHealth(diagnostics) {
+  const summary = diagnostics.summary || {};
+  const health = diagnostics.adapter_health || [];
+  $("#adapterHealthMeta").textContent = `${Number(summary.bundles || 0)} diagnostic bundles · ${Number(summary.critical || 0)} critical`;
+  $("#adapterHealthList").innerHTML = health.length
+    ? health.map((item) => `
+        <div class="adapter-health-row">
+          <div>
+            <div class="browser-session-heading">
+              <strong>${escapeHtml(formatMode(item.adapter || "unsupported"))}</strong>
+              <span class="status">${escapeHtml(formatMode(item.status || "attention"))}</span>
+            </div>
+            <p>${escapeHtml(item.hostname || "Unknown host")}</p>
+            <span>${escapeHtml(item.last_message || "No recent outcome message.")}</span>
+          </div>
+          <div class="adapter-health-metrics">
+            <strong>${Number(item.success_rate || 0)}%</strong>
+            <span>${Number(item.submitted || 0)} submitted · ${Number(item.attempts || 0)} attempts</span>
+            <small>Last: ${escapeHtml(formatMode(item.last_category || "none"))}</small>
+          </div>
+        </div>
+      `).join("")
+    : `<div class="empty">Adapter health will appear after the first browser application attempt.</div>`;
 }
 
 function renderApplications(apps, tasks) {

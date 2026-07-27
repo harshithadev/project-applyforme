@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -40,6 +41,11 @@ class ATSFixture(BaseHTTPRequestHandler):
             else:
                 body = b"""<!doctype html><html><body>
                 <div class="captcha">Human verification required</div>
+                <script>
+                  console.error(
+                    "diagnostic fixture alex@example.test 212-555-0199 password=fixture-password https://fixture.example.test/error?token=private"
+                  );
+                </script>
                 <button id="manual-clear" onclick="
                   document.cookie='manual_clear=ready; Max-Age=3600; Path=/';
                   window.location.href='/manual-captcha?ats=workday&amp;cleared=1';
@@ -265,7 +271,14 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["APPLYFORME_ROOT"] = tmp
 
-        from job_agent import applications, automation, browser_sessions, jobs, profile
+        from job_agent import (
+            applications,
+            automation,
+            browser_diagnostics,
+            browser_sessions,
+            jobs,
+            profile,
+        )
         from job_agent.config import BROWSER_SESSIONS_DIR, DOCS_DIR
         from job_agent.db import init_db, row, set_setting
 
@@ -432,6 +445,36 @@ def main() -> None:
             automation.apply_application(int(captcha_app["id"]))
             captcha_task = automation.process_next_task()
             assert captcha_task and captcha_task["checkpoint_kind"] == "captcha"
+            assert captcha_task["diagnostics"]
+            captcha_diagnostic = captcha_task["diagnostics"][0]
+            assert captcha_diagnostic["category"] == "captcha"
+            assert captcha_diagnostic["retryable"] is True
+            assert "manual takeover" in captcha_diagnostic["recommendation"].lower()
+            diagnostic_record = browser_diagnostics.bundle_artifact(
+                int(captcha_diagnostic["id"])
+            )
+            assert diagnostic_record
+            diagnostic_path = Path(str(diagnostic_record["artifact_path"]))
+            assert diagnostic_path.is_file()
+            diagnostic_text = diagnostic_path.read_text(encoding="utf-8")
+            diagnostic_payload = json.loads(diagnostic_text)
+            assert diagnostic_payload["target_url"] == f"{base_url}/manual-captcha"
+            assert diagnostic_payload["snapshot"]["url"] == f"{base_url}/manual-captcha"
+            assert diagnostic_payload["snapshot"]["buttons"][0]["question"] == (
+                "Complete human verification"
+            )
+            assert "[redacted-email]" in diagnostic_text
+            assert "[redacted-phone]" in diagnostic_text
+            assert "password=[redacted]" in diagnostic_text
+            for private_value in (
+                "alex@example.test",
+                "212-555-0199",
+                "fixture-password",
+                "token=private",
+                "?ats=workday",
+                "manual_clear=ready",
+            ):
+                assert private_value not in diagnostic_text
 
             def clear_captcha(page: object) -> str:
                 page.locator("#manual-clear").click()
@@ -480,6 +523,19 @@ def main() -> None:
             manual_submitted = automation.get_task(int(manual_task["id"]))
             assert manual_submitted and manual_submitted["status"] == "submitted"
             assert manual_submitted["result"]["manual_takeover"] is True
+            assert manual_submitted["diagnostics"][0]["category"] == "submitted_manually"
+
+            diagnostics_state = browser_diagnostics.dashboard_state()
+            workday_health = next(
+                item
+                for item in diagnostics_state["adapter_health"]
+                if item["adapter"] == "workday"
+                and item["hostname"] == "127.0.0.1"
+            )
+            assert workday_health["attempts"] >= 5
+            assert workday_health["submitted"] >= 4
+            assert workday_health["manual_submissions"] == 1
+            assert workday_health["category_counts"]["captcha"] >= 2
 
             profile_dirs = [path for path in BROWSER_SESSIONS_DIR.iterdir() if path.is_dir()]
             assert profile_dirs

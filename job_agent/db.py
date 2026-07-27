@@ -251,6 +251,39 @@ def init_db() -> None:
               FOREIGN KEY(task_id) REFERENCES application_tasks(id)
             );
 
+            CREATE TABLE IF NOT EXISTS browser_diagnostic_bundles (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id INTEGER NOT NULL,
+              adapter TEXT NOT NULL,
+              hostname TEXT NOT NULL DEFAULT '',
+              outcome_status TEXT NOT NULL,
+              category TEXT NOT NULL,
+              severity TEXT NOT NULL,
+              retryable INTEGER NOT NULL DEFAULT 0,
+              recommendation TEXT NOT NULL,
+              artifact_path TEXT NOT NULL DEFAULT '',
+              summary_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(task_id) REFERENCES application_tasks(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS adapter_health (
+              adapter TEXT NOT NULL,
+              hostname TEXT NOT NULL,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              submitted INTEGER NOT NULL DEFAULT 0,
+              checkpoints INTEGER NOT NULL DEFAULT 0,
+              failures INTEGER NOT NULL DEFAULT 0,
+              manual_submissions INTEGER NOT NULL DEFAULT 0,
+              last_outcome TEXT NOT NULL DEFAULT '',
+              last_category TEXT NOT NULL DEFAULT '',
+              last_message TEXT NOT NULL DEFAULT '',
+              category_counts_json TEXT NOT NULL DEFAULT '{}',
+              last_attempt_at TEXT NOT NULL DEFAULT '',
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY(adapter, hostname)
+            );
+
             CREATE TABLE IF NOT EXISTS answer_rules (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               question TEXT NOT NULL UNIQUE,
@@ -520,6 +553,18 @@ def init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_application_task_events_task "
             "ON application_task_events(task_id, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_browser_diagnostics_task "
+            "ON browser_diagnostic_bundles(task_id, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_browser_diagnostics_category "
+            "ON browser_diagnostic_bundles(category, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_adapter_health_updated "
+            "ON adapter_health(updated_at DESC)"
         )
         contact_columns = {
             "verification_status": "TEXT NOT NULL DEFAULT 'unverified'",

@@ -30,6 +30,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - CAPTCHA, login, sensitive-question, unknown-field, final-review, and uncertain-submission stops.
 - Per-ATS local Chromium sessions with guided manual login handoff and dashboard clearing controls.
 - Guided persistent-browser takeover for CAPTCHA, unsupported forms or controls, and bounded step-limit checkpoints.
+- Sanitized browser diagnostic bundles, structured recovery recommendations, and per-host ATS adapter health tracking.
 - Contact-specific outreach revisions, explicit approval, retry controls, and SMTP daily limits.
 - Bounded public company-page contact discovery with role ranking, source provenance, and verification gates.
 - Plain-English activity log.
@@ -206,7 +207,7 @@ Run the durable pipeline and guarded end-to-end transition test with:
 npm run test:pipeline
 ```
 
-Run the persistent task lifecycle, real local Chromium adapter, saved-session, login-handoff, manual-takeover, guarded manual-submission, and profile-clearing tests with:
+Run the persistent task lifecycle, real local Chromium adapter, saved-session, login-handoff, manual-takeover, guarded manual-submission, sanitized diagnostics, adapter-health, and profile-clearing tests with:
 
 ```bash
 npm run test:applications

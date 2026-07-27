@@ -830,7 +830,12 @@ main {
   display: grid;
 }
 
-.browser-session-row {
+.adapter-health-list {
+  display: grid;
+}
+
+.browser-session-row,
+.adapter-health-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -839,17 +844,22 @@ main {
   border-top: 1px solid var(--line);
 }
 
-.browser-session-row:first-child {
+.browser-session-row:first-child,
+.adapter-health-row:first-child {
   border-top: 0;
 }
 
-.browser-session-row p {
+.browser-session-row p,
+.adapter-health-row p {
   margin: 4px 0;
   font-size: 13px;
 }
 
 .browser-session-row > div > span,
-.browser-session-actions > span {
+.browser-session-actions > span,
+.adapter-health-row > div > span,
+.adapter-health-metrics span,
+.adapter-health-metrics small {
   color: var(--muted);
   font-size: 12px;
 }
@@ -866,6 +876,18 @@ main {
   justify-content: flex-end;
   gap: 12px;
   text-align: right;
+}
+
+.adapter-health-metrics {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  min-width: 170px;
+  text-align: right;
+}
+
+.adapter-health-metrics strong {
+  font-size: 18px;
 }
 
 .browser-session-inline {
@@ -1031,6 +1053,31 @@ main {
   margin-top: 10px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.task-diagnostic {
+  margin: 10px 0;
+  padding: 10px 0;
+  border-block: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.task-diagnostic summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.task-diagnostic p {
+  margin: 8px 0;
+}
+
+.diagnostic-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .task-history summary {
@@ -1426,6 +1473,7 @@ textarea {
   .document-row-head,
   .connection-row,
   .browser-session-row,
+  .adapter-health-row,
   .service-details > div:first-child {
     align-items: stretch;
     flex-direction: column;
@@ -1446,6 +1494,11 @@ textarea {
 
   .browser-session-actions {
     justify-content: space-between;
+    text-align: left;
+  }
+
+  .adapter-health-metrics {
+    justify-items: start;
     text-align: left;
   }
 

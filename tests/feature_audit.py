@@ -222,6 +222,7 @@ def main() -> None:
             app,
             applications,
             automation,
+            browser_diagnostics,
             browser_sessions,
             contact_discovery,
             emailer,
@@ -622,6 +623,7 @@ def main() -> None:
             and state.get("document_inbox")
             and state.get("readiness")
             and "browser_sessions" in state
+            and "browser_diagnostics" in state
             and created.get("id")
             and api_application.get("id")
             and api_contact.get("id")
@@ -867,6 +869,26 @@ def main() -> None:
                 and completed_task["browser_session"].get("profile_present")
                 and completed_task["browser_session"].get("last_used_at")
             )
+            diagnostic_ready = bool(
+                manual_checkpoint
+                and manual_checkpoint.get("diagnostics")
+                and manual_checkpoint["diagnostics"][0].get("category") == "captcha"
+                and manual_checkpoint["diagnostics"][0].get("download_available")
+                and browser_diagnostics.dashboard_state().get("adapter_health")
+            )
+            diagnostic_bundle_id = int(manual_checkpoint["diagnostics"][0]["id"])
+            diagnostic_handler = QuietAppHandler.build(app.Handler)
+            with running_server(diagnostic_handler) as diagnostic_dashboard_url:
+                diagnostic_body, diagnostic_type, diagnostic_disposition = request_bytes(
+                    f"{diagnostic_dashboard_url}/api/applications/task-diagnostic"
+                    f"?bundle_id={diagnostic_bundle_id}"
+                )
+            diagnostic_ready = bool(
+                diagnostic_ready
+                and json.loads(diagnostic_body).get("category") == "captcha"
+                and diagnostic_type == "application/json"
+                and "attachment" in diagnostic_disposition
+            )
             record(
                 "PASS" if review_ready and worker_completed else "FAIL",
                 "Playwright browser submission",
@@ -895,11 +917,19 @@ def main() -> None:
                 if takeover_completed
                 else f"Takeover result: ready={takeover_ready}, task={completed_manual}",
             )
+            record(
+                "PASS" if diagnostic_ready else "FAIL",
+                "ATS diagnostics and recovery bundles",
+                "Browser outcomes produce redacted downloadable bundles, fixed recovery guidance, and per-host adapter health."
+                if diagnostic_ready
+                else f"Diagnostic result: {manual_checkpoint.get('diagnostics') if manual_checkpoint else None}",
+            )
         except Exception as exc:
             record("FAIL", "Playwright browser submission", f"Local ATS integration failed: {exc}")
             record("FAIL", "Background application worker", f"Worker integration failed: {exc}")
             record("FAIL", "Persistent ATS browser sessions", f"Session integration failed: {exc}")
             record("FAIL", "Guided manual browser takeover", f"Takeover integration failed: {exc}")
+            record("FAIL", "ATS diagnostics and recovery bundles", f"Diagnostic integration failed: {exc}")
 
         set_setting("pipeline_enabled", "true")
         set_setting("pipeline_min_score", "100")
