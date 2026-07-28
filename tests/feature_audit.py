@@ -368,7 +368,7 @@ def main() -> None:
                 "product,project_program,agile_delivery,consulting,"
                 "change_transformation,strategy_operations"
             ),
-            "graduate_max_required_experience_years": "2",
+            "graduate_max_required_experience_years": "3",
             "graduate_include_internships": "false",
             "additional_title_aliases": "",
             "excluded_title_terms": (
@@ -410,11 +410,16 @@ def main() -> None:
         )
         excessive_experience = graduate_match(
             "Project Coordinator",
+            "Requires 4+ years of project delivery experience.",
+        )
+        three_year_experience = graduate_match(
+            "Project Coordinator",
             "Requires 3+ years of project delivery experience.",
         )
         graduate_matching_ready = bool(
             graduate_product.accepted
             and renamed_change.accepted
+            and three_year_experience.accepted
             and not unrelated_title.accepted
             and not senior_title.accepted
             and not excessive_experience.accepted
@@ -430,6 +435,7 @@ def main() -> None:
             if graduate_matching_ready
             else (
                 f"product={graduate_product}, renamed={renamed_change}, "
+                f"three_years={three_year_experience}, "
                 f"unrelated={unrelated_title}, senior={senior_title}, "
                 f"experience={excessive_experience}"
             ),

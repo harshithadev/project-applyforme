@@ -19,7 +19,7 @@ def main() -> None:
             "product,project_program,agile_delivery,consulting,"
             "change_transformation,strategy_operations"
         ),
-        "graduate_max_required_experience_years": "2",
+        "graduate_max_required_experience_years": "3",
         "graduate_include_internships": "false",
         "additional_title_aliases": "",
         "excluded_title_terms": (
@@ -83,21 +83,34 @@ def main() -> None:
 
     overqualified = evaluate(
         "Project Coordinator",
+        "This role requires 4+ years of project delivery experience.",
+    )
+    assert (
+        not overqualified.accepted
+        and "requires at least 4 years" in overqualified.rejection
+    )
+
+    three_year_requirement = evaluate(
+        "Project Coordinator",
         "This role requires 3+ years of project delivery experience.",
     )
-    assert not overqualified.accepted and "requires at least 3 years" in overqualified.rejection
+    assert three_year_requirement.accepted, three_year_requirement
+    assert any(
+        "Required experience: 3 years" in reason
+        for reason in three_year_requirement.reasons
+    )
 
     preferred_only = evaluate(
         "Project Coordinator",
-        "Experience is welcome. 3 years of project delivery experience is preferred.",
+        "Experience is welcome. 4 years of project delivery experience is preferred.",
     )
     assert preferred_only.accepted, preferred_only
 
     required_then_preferred = experience_requirements(
-        "At least 3 years of project delivery experience required. "
+        "At least 4 years of project delivery experience required. "
         "A professional certification is preferred."
     )
-    assert required_then_preferred["required_years"] == 3, required_then_preferred
+    assert required_then_preferred["required_years"] == 4, required_then_preferred
     assert required_then_preferred["preferred_years"] is None, required_then_preferred
 
     possessive_experience = evaluate(

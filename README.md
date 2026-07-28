@@ -171,7 +171,7 @@ Add company career pages or public Greenhouse, Lever, Ashby, SmartRecruiters, an
 
 **Graduate / Early Career** is the default career target. Select any combination of Product management, Project and program, Agile delivery, Consulting, Change and transformation, and Strategy and operations. The matcher recognizes conservative early-career title variants, graduate programmes, and user-supplied title aliases. Management terms in a description affect scoring but cannot make an unrelated job title eligible.
 
-The required-experience ceiling defaults to two years. Explicit requirements above the ceiling are rejected, while experience described only as preferred does not reject the role. Senior title terms and internships are excluded by default and can be adjusted in Settings. **Open keyword search** retains the broader role-keyword matcher for searches outside this graduate policy.
+The required-experience ceiling defaults to three years. Explicit requirements above the ceiling are rejected, while experience described only as preferred does not reject the role. Raise the ceiling in Settings to include roles requiring more than three years. Senior title terms and internships are excluded by default and can also be adjusted there. **Open keyword search** retains the broader role-keyword matcher for searches outside this graduate policy.
 
 Ashby, SmartRecruiters, and Workday scans paginate up to **Max jobs per source** per run. The next offset is stored in SQLite and resumed on the next scan; the **Source scans** panel shows progress, errors, and when a full cycle completes.
 

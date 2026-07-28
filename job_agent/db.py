@@ -698,7 +698,7 @@ def init_db() -> None:
                 "product,project_program,agile_delivery,consulting,"
                 "change_transformation,strategy_operations"
             ),
-            "graduate_max_required_experience_years": "2",
+            "graduate_max_required_experience_years": "3",
             "graduate_include_internships": "false",
             "additional_title_aliases": "",
             "excluded_title_terms": (

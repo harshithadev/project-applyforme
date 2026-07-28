@@ -70,7 +70,7 @@ def main() -> None:
                 ).count() == 6
                 assert page.locator(
                     "input[name='graduate_max_required_experience_years']"
-                ).input_value() == "2"
+                ).input_value() == "3"
                 assert not page.locator(
                     "input[name='graduate_include_internships']"
                 ).is_checked()

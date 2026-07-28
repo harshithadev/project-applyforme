@@ -242,6 +242,10 @@ GRADUATE_DESCRIPTION_SIGNALS = (
     "0-2 years",
     "0 to 2 years",
     "zero to two years",
+    "0-3 years",
+    "0 to 3 years",
+    "zero to three years",
+    "up to 3 years",
 )
 INTERNSHIP_TERMS = ("intern", "internship", "co op", "placement")
 DEFAULT_EXCLUDED_TITLE_TERMS = (
@@ -372,10 +376,10 @@ def _excluded_title_terms(settings: dict[str, str]) -> list[str]:
 def _maximum_required_years(settings: dict[str, str]) -> int:
     try:
         configured = int(
-            settings.get("graduate_max_required_experience_years", "2") or "2"
+            settings.get("graduate_max_required_experience_years", "3") or "3"
         )
     except (TypeError, ValueError):
-        configured = 2
+        configured = 3
     return max(0, min(20, configured))
 
 
