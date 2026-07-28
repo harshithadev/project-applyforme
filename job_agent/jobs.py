@@ -402,7 +402,7 @@ def _process_source_result(
     )
 
 
-def discover_jobs() -> dict[str, int]:
+def discover_jobs(*, force: bool = False) -> dict[str, int]:
     settings = all_settings()
     urls = split_csv(settings.get("career_urls", ""))
     providers = _configured_provider_keys(settings)
@@ -427,7 +427,7 @@ def discover_jobs() -> dict[str, int]:
     for key in providers:
         provider = provider_for(key)
         remaining = _provider_cooldown_minutes(key)
-        if remaining:
+        if remaining and not force:
             result["skipped"] += 1
             log(
                 f"{provider.label} scan skipped for {remaining} more minute(s) "

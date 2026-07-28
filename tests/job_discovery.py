@@ -323,6 +323,7 @@ def main() -> None:
             set_setting("posted_within_days", "14")
             broad_first = jobs.discover_jobs()
             broad_second = jobs.discover_jobs()
+            broad_forced = jobs.discover_jobs(force=True)
         finally:
             broad_sources.fetch_json = old_broad_fetch_json
             broad_sources.fetch_url = old_broad_fetch_url
@@ -345,13 +346,21 @@ def main() -> None:
             "sources": 4,
             "skipped": 4,
         }, broad_second
+        assert broad_forced == {
+            "inserted": 0,
+            "seen": 4,
+            "filtered": 0,
+            "errors": 0,
+            "sources": 4,
+            "skipped": 0,
+        }, broad_forced
         broad_states = {
             state["source_kind"]: state
             for state in jobs.list_source_states()
             if state["source_kind"] in broad_sources.PROVIDERS
         }
         assert set(broad_states) == set(broad_sources.PROVIDERS)
-        assert all(state["scan_count"] == 1 for state in broad_states.values())
+        assert all(state["scan_count"] == 2 for state in broad_states.values())
         assert all(state["metadata"]["attribution_url"] for state in broad_states.values())
 
         age_filter_base = {

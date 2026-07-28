@@ -36,7 +36,7 @@ def main() -> None:
     elif args.command == "ingest-docs":
         print(profile.ingest_docs())
     elif args.command == "scan-jobs":
-        print(jobs.discover_jobs())
+        print(jobs.discover_jobs(force=True))
     elif args.command == "draft":
         app = applications.draft_application(args.job_id)
         print(f"Drafted application {app.get('id')}: {app.get('resume_tex_path')}")

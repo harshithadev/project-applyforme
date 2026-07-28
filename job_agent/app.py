@@ -133,7 +133,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif path == "/api/documents/remove":
                 self.json(documents.remove_document(int(payload["document_id"])))
             elif path == "/api/jobs/scan":
-                self.json(jobs.discover_jobs())
+                self.json(jobs.discover_jobs(force=True))
             elif path == "/api/jobs":
                 self.json({"id": jobs.add_manual_job(payload)})
             elif path == "/api/pipeline/run":
