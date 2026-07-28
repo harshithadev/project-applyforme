@@ -12,6 +12,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - A source-grounded structured candidate profile with contact, skills, education, certifications, and evidence.
 - Manual job entry and enriched career-page scanning with Greenhouse, Lever, Ashby, SmartRecruiters, and Workday adapters.
 - Persistent per-source cursors, pagination status, scan counts, and errors in the dashboard.
+- Graduate and early-career management matching across product, project/program, agile delivery, consulting, change/transformation, and strategy/operations roles.
 - Role, company, location, and toggleable hour/calendar-day posting-age filters with canonical URL and ATS-ID deduplication.
 - A durable score-gated pipeline from discovery through tailoring, review, and guarded browser automation.
 - Per-job pipeline history, retries, skips, daily intake limits, and crash recovery.
@@ -168,9 +169,20 @@ npm run test:documents
 
 Add company career pages or public Greenhouse, Lever, Ashby, SmartRecruiters, and Workday career-site URLs under **Settings > Career URLs**. Scans fetch complete descriptions, normalize location and posting dates where the source exposes them, and retain matching reasons with each job. These public discovery feeds do not require API credentials.
 
+**Graduate / Early Career** is the default career target. Select any combination of Product management, Project and program, Agile delivery, Consulting, Change and transformation, and Strategy and operations. The matcher recognizes conservative early-career title variants, graduate programmes, and user-supplied title aliases. Management terms in a description affect scoring but cannot make an unrelated job title eligible.
+
+The required-experience ceiling defaults to two years. Explicit requirements above the ceiling are rejected, while experience described only as preferred does not reject the role. Senior title terms and internships are excluded by default and can be adjusted in Settings. **Open keyword search** retains the broader role-keyword matcher for searches outside this graduate policy.
+
 Ashby, SmartRecruiters, and Workday scans paginate up to **Max jobs per source** per run. The next offset is stored in SQLite and resumed on the next scan; the **Source scans** panel shows progress, errors, and when a full cycle completes.
 
 The posting-age filter can run in **Hours** or **Calendar days** mode. Hours mode applies an exact elapsed-time cutoff and therefore requires a source timestamp. Calendar days mode uses local calendar dates and includes sources that publish only a date without a time. **Include jobs without a posting date** separately controls postings whose source supplies no date at all.
+
+Run the discovery, posting-age, and graduate management matcher tests with:
+
+```bash
+npm run test:jobs
+npm run test:graduate
+```
 
 ## Application pipeline
 

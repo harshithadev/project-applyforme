@@ -55,6 +55,55 @@ def main() -> None:
                 )
                 page.locator(".nav-item[data-view='settings']").click()
                 assert page.locator(
+                    "input[name='career_stage_mode'][value='graduate']"
+                ).is_checked()
+                assert page.locator(
+                    "[data-career-stage-mode='graduate']"
+                ).is_visible()
+                assert page.locator(
+                    "[data-career-stage-mode='open']"
+                ).is_hidden()
+                family_fields = page.locator("input[name='target_role_families']")
+                assert family_fields.count() == 6
+                assert page.locator(
+                    "input[name='target_role_families']:checked"
+                ).count() == 6
+                assert page.locator(
+                    "input[name='graduate_max_required_experience_years']"
+                ).input_value() == "2"
+                assert not page.locator(
+                    "input[name='graduate_include_internships']"
+                ).is_checked()
+                page.locator(
+                    "#careerStageControl span", has_text="Open keyword search"
+                ).click()
+                assert page.locator(
+                    "input[name='career_stage_mode'][value='open']"
+                ).is_checked()
+                assert page.locator(
+                    "[data-career-stage-mode='open']"
+                ).is_visible()
+                assert page.locator(
+                    "[data-career-stage-mode='graduate']"
+                ).is_hidden()
+                page.locator(
+                    "#careerStageControl span", has_text="Graduate / Early Career"
+                ).click()
+                for index in range(family_fields.count()):
+                    family_fields.nth(index).uncheck()
+                page.locator(
+                    "input[name='target_role_families'][value='product']"
+                ).check()
+                page.locator(
+                    "input[name='target_role_families'][value='consulting']"
+                ).check()
+                page.locator(
+                    "input[name='graduate_max_required_experience_years']"
+                ).fill("1")
+                page.locator(
+                    "input[name='graduate_include_internships']"
+                ).check()
+                assert page.locator(
                     "input[name='posted_age_mode'][value='days']"
                 ).is_checked()
                 assert page.locator(
@@ -84,6 +133,16 @@ def main() -> None:
                 assert setting("posted_age_mode") == "hours"
                 assert setting("posted_within_hours") == "6"
                 assert setting("include_unknown_posted_at") == "false"
+                assert setting("career_stage_mode") == "graduate"
+                assert setting("target_role_families") == "product,consulting"
+                assert setting("graduate_max_required_experience_years") == "1"
+                assert setting("graduate_include_internships") == "true"
+                settings_desktop = Path(tmp) / "settings-desktop.png"
+                page.screenshot(path=str(settings_desktop), full_page=True)
+                assert settings_desktop.stat().st_size > 10_000
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth + 1"
+                )
                 page.locator("button[data-view='applications']").click()
                 desktop = Path(tmp) / "dashboard-desktop.png"
                 page.screenshot(path=str(desktop), full_page=True)
@@ -99,6 +158,17 @@ def main() -> None:
                 mobile = Path(tmp) / "dashboard-mobile.png"
                 page.screenshot(path=str(mobile), full_page=True)
                 assert mobile.stat().st_size > 10_000
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth + 1"
+                )
+                page.locator(".nav-item[data-view='settings']").click()
+                assert page.locator(
+                    "[data-career-stage-mode='graduate']"
+                ).is_visible()
+                assert page.locator(".role-family-grid").is_visible()
+                settings_mobile = Path(tmp) / "settings-mobile.png"
+                page.screenshot(path=str(settings_mobile), full_page=True)
+                assert settings_mobile.stat().st_size > 10_000
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth + 1"
                 )

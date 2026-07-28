@@ -119,6 +119,7 @@ def main() -> None:
         from job_agent.db import init_db, rows, set_setting
 
         init_db()
+        set_setting("career_stage_mode", "open")
         set_setting("target_companies", "ExampleCo")
         set_setting("role_keywords", "platform engineer, Python")
         set_setting("locations", "remote")

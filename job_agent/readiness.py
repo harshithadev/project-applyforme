@@ -120,7 +120,33 @@ def evaluate_readiness(
 
     career_urls = _values(settings.get("career_urls"))
     role_keywords = _values(settings.get("role_keywords"))
+    role_families = _values(settings.get("target_role_families"))
+    additional_title_aliases = _values(settings.get("additional_title_aliases"))
     locations = _values(settings.get("locations"))
+    career_stage_mode = str(
+        settings.get("career_stage_mode", "open") or "open"
+    ).casefold()
+    if career_stage_mode == "graduate":
+        role_targets = role_families or additional_title_aliases
+        targeting_message = (
+            f"{len(role_families)} management role family(s), "
+            f"{len(additional_title_aliases)} additional title(s), and "
+            f"{len(locations)} location preference(s) are configured."
+            if role_targets and locations
+            else (
+                "Select a management role family or add an accepted title, "
+                "then add a location preference."
+            )
+        )
+    else:
+        role_targets = role_keywords
+        targeting_message = (
+            f"{len(role_keywords)} role keyword(s) and "
+            f"{len(locations)} location preference(s) are configured."
+            if role_keywords and locations
+            else "Add at least one role keyword and location preference."
+        )
+    targeting_ready = bool(role_targets and locations)
     job_count = int((row("SELECT COUNT(*) AS count FROM jobs") or {"count": 0})["count"])
     discovery_ready = bool(career_urls or job_count)
     email_configured = bool(email_value.get("configured"))
@@ -237,15 +263,14 @@ def evaluate_readiness(
         _check(
             "targeting",
             "Search targeting",
-            "pass" if role_keywords and locations else "blocked",
-            (
-                f"{len(role_keywords)} role keyword(s) and {len(locations)} location preference(s) are configured."
-                if role_keywords and locations
-                else "Add at least one role keyword and location preference."
-            ),
+            "pass" if targeting_ready else "blocked",
+            targeting_message,
             required=True,
-            view="setup",
+            view="settings",
             detail={
+                "career_stage_mode": career_stage_mode,
+                "role_families": len(role_families),
+                "additional_title_aliases": len(additional_title_aliases),
                 "role_keywords": len(role_keywords),
                 "locations": len(locations),
             },

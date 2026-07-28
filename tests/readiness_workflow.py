@@ -80,6 +80,14 @@ def main() -> None:
         initial = readiness.evaluate_readiness(capabilities)
         assert initial["status"] == "blocked", initial
         assert {"documents", "discovery"} <= set(initial["summary"]["blocking"])
+        graduate_targeting = next(
+            item for item in initial["checks"] if item["id"] == "targeting"
+        )
+        assert graduate_targeting["status"] == "pass"
+        assert graduate_targeting["view"] == "settings"
+        assert graduate_targeting["detail"]["career_stage_mode"] == "graduate"
+        assert graduate_targeting["detail"]["role_families"] == 6
+        assert "management role family" in graduate_targeting["message"]
         assert not next(
             item for item in initial["modes"] if item["id"] == "review_automation"
         )["ready"]
@@ -88,6 +96,43 @@ def main() -> None:
             raise AssertionError("Setup completed while required checks were blocked")
         except ValueError as exc:
             assert "documents" in str(exc) and "discovery" in str(exc)
+
+        set_setting("target_role_families", "")
+        missing_graduate_target = readiness.evaluate_readiness(capabilities)
+        assert next(
+            item
+            for item in missing_graduate_target["checks"]
+            if item["id"] == "targeting"
+        )["status"] == "blocked"
+        set_setting("additional_title_aliases", "transformation partner")
+        custom_graduate_target = readiness.evaluate_readiness(capabilities)
+        assert next(
+            item
+            for item in custom_graduate_target["checks"]
+            if item["id"] == "targeting"
+        )["status"] == "pass"
+        set_setting(
+            "target_role_families",
+            (
+                "product,project_program,agile_delivery,consulting,"
+                "change_transformation,strategy_operations"
+            ),
+        )
+        set_setting("additional_title_aliases", "")
+        set_setting("career_stage_mode", "open")
+        set_setting("role_keywords", "")
+        missing_open_target = readiness.evaluate_readiness(capabilities)
+        assert next(
+            item
+            for item in missing_open_target["checks"]
+            if item["id"] == "targeting"
+        )["status"] == "blocked"
+        set_setting("role_keywords", "project coordinator")
+        open_target = readiness.evaluate_readiness(capabilities)
+        assert next(
+            item for item in open_target["checks"] if item["id"] == "targeting"
+        )["status"] == "pass"
+        set_setting("career_stage_mode", "graduate")
 
         DOCS_DIR.mkdir(parents=True, exist_ok=True)
         (DOCS_DIR / "resume.md").write_text(

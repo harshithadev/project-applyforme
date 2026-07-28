@@ -15,6 +15,7 @@ from .job_sources import (
     source_kind,
 )
 from .latex import keyword_score
+from .role_matching import evaluate_graduate_role
 
 
 @dataclass(frozen=True)
@@ -74,9 +75,19 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
     company_terms = [(company, _normalized(company)) for company in companies if _normalized(company)]
     title_blob = _normalized(posting.title)
     role_blob = _normalized(f"{posting.title} {posting.description}")
+    career_stage_mode = str(
+        settings.get("career_stage_mode", "open") or "open"
+    ).casefold()
+    graduate_role = (
+        evaluate_graduate_role(posting, settings)
+        if career_stage_mode == "graduate"
+        else None
+    )
+    if graduate_role and not graduate_role.accepted:
+        return MatchDecision(False, 0, [], graduate_role.rejection)
     title_hits = [keyword for keyword, term in keyword_terms if term in title_blob]
     role_hits = [keyword for keyword, term in keyword_terms if term in role_blob]
-    if keyword_terms and not role_hits:
+    if not graduate_role and keyword_terms and not role_hits:
         return MatchDecision(False, 0, [], "role keywords did not match")
 
     company_blob = _normalized(posting.company)
@@ -147,12 +158,18 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
 
     role_ratio = len(role_hits) / max(len(keyword_terms), 1) if keyword_terms else 1
     title_ratio = len(title_hits) / max(len(keyword_terms), 1) if keyword_terms else 1
-    score = round(role_ratio * 60 + title_ratio * 20)
+    score = (
+        int(graduate_role.score)
+        if graduate_role
+        else round(role_ratio * 60 + title_ratio * 20)
+    )
     score += 10 if location_hits else 6 if not location_terms else 4 if not location_blob else 0
     score += 5 if company_terms else 3
     score += 5 if age_value is not None else 2
     reasons = []
-    if role_hits:
+    if graduate_role:
+        reasons.extend(graduate_role.reasons)
+    elif role_hits:
         reasons.append(f"Role: {', '.join(role_hits[:4])}")
     if location_hits:
         reasons.append(f"Location: {', '.join(location_hits[:3])}")

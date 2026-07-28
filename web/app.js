@@ -1271,18 +1271,33 @@ function populateSettings(settings) {
     const form = $(selector);
     for (const [key, value] of Object.entries(settings)) {
       const fields = form.querySelectorAll(`[name="${key}"]`);
+      const selectedValues = new Set(
+        String(value).split(",").map((item) => item.trim()).filter(Boolean)
+      );
       fields.forEach((field) => {
         if (field.type === "radio") {
           field.checked = field.value === value;
         } else if (field.type === "checkbox") {
-          field.checked = value === "true";
+          field.checked = fields.length > 1
+            ? selectedValues.has(field.value)
+            : value === "true";
         } else {
           field.value = value;
         }
       });
     }
+    updateCareerStageControls(form);
     updatePostingAgeControls(form);
   }
+}
+
+function updateCareerStageControls(form) {
+  if (!form) return;
+  const selected = form.querySelector("input[name='career_stage_mode']:checked");
+  const mode = selected?.value || "graduate";
+  form.querySelectorAll("[data-career-stage-mode]").forEach((field) => {
+    field.hidden = field.dataset.careerStageMode !== mode;
+  });
 }
 
 function updatePostingAgeControls(form) {
@@ -1828,6 +1843,13 @@ function bindEvents() {
     const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
     payload.include_unknown_posted_at = event.currentTarget.elements
       .include_unknown_posted_at.checked ? "true" : "false";
+    payload.graduate_include_internships = event.currentTarget.elements
+      .graduate_include_internships.checked ? "true" : "false";
+    payload.target_role_families = Array.from(
+      event.currentTarget.querySelectorAll(
+        "input[name='target_role_families']:checked"
+      )
+    ).map((field) => field.value).join(",");
     await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
     toast("Settings saved.");
     await loadState();
@@ -1843,6 +1865,10 @@ function bindEvents() {
 
   $("#settingsForm").querySelectorAll("input[name='posted_age_mode']").forEach((field) => {
     field.addEventListener("change", () => updatePostingAgeControls($("#settingsForm")));
+  });
+
+  $("#settingsForm").querySelectorAll("input[name='career_stage_mode']").forEach((field) => {
+    field.addEventListener("change", () => updateCareerStageControls($("#settingsForm")));
   });
 
   $("#ruleForm").addEventListener("submit", async (event) => {

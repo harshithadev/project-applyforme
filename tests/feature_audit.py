@@ -276,6 +276,7 @@ def main() -> None:
             record("BLOCKED", "PDF and DOCX documents", "Run npm run setup to install PDF extraction support.")
 
         with running_server(CareerFixture) as careers_url:
+            set_setting("career_stage_mode", "open")
             set_setting("career_urls", careers_url)
             set_setting("target_companies", "ExampleCo")
             set_setting("role_keywords", "platform engineer, Python, TypeScript")
@@ -359,6 +360,79 @@ def main() -> None:
             )
             if day_window.accepted and not hour_window.accepted
             else f"days={day_window}, hours={hour_window}",
+        )
+
+        graduate_settings = {
+            "career_stage_mode": "graduate",
+            "target_role_families": (
+                "product,project_program,agile_delivery,consulting,"
+                "change_transformation,strategy_operations"
+            ),
+            "graduate_max_required_experience_years": "2",
+            "graduate_include_internships": "false",
+            "additional_title_aliases": "",
+            "excluded_title_terms": (
+                "senior, principal, director, head of, vice president, "
+                "vp, chief, lead"
+            ),
+            "locations": "remote",
+            "target_companies": "ExampleCo",
+            "posted_within_days": "0",
+        }
+
+        def graduate_match(title: str, description: str) -> object:
+            return jobs.evaluate_posting(
+                job_sources.JobPosting(
+                    title=title,
+                    company="ExampleCo",
+                    url=f"https://example.test/jobs/{title.casefold().replace(' ', '-')}",
+                    description=description,
+                    location="Remote",
+                ),
+                graduate_settings,
+            )
+
+        graduate_product = graduate_match(
+            "Associate Product Manager",
+            "A recent-graduate role requiring 1 year of experience with roadmaps.",
+        )
+        renamed_change = graduate_match(
+            "Graduate Transformation Partner",
+            "A graduate programme focused on adoption and change impact.",
+        )
+        unrelated_title = graduate_match(
+            "Software Engineer",
+            "Agile project delivery, consulting, product, and change management.",
+        )
+        senior_title = graduate_match(
+            "Senior Product Manager",
+            "Own a product roadmap.",
+        )
+        excessive_experience = graduate_match(
+            "Project Coordinator",
+            "Requires 3+ years of project delivery experience.",
+        )
+        graduate_matching_ready = bool(
+            graduate_product.accepted
+            and renamed_change.accepted
+            and not unrelated_title.accepted
+            and not senior_title.accepted
+            and not excessive_experience.accepted
+        )
+        record(
+            "PASS" if graduate_matching_ready else "FAIL",
+            "Graduate management role matching",
+            (
+                "Selected management families accept early-career title variants "
+                "while rejecting unrelated titles, senior roles, and excessive "
+                "required experience."
+            )
+            if graduate_matching_ready
+            else (
+                f"product={graduate_product}, renamed={renamed_change}, "
+                f"unrelated={unrelated_title}, senior={senior_title}, "
+                f"experience={excessive_experience}"
+            ),
         )
 
         tailored_job_id = jobs.add_manual_job(

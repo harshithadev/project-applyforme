@@ -693,6 +693,18 @@ def init_db() -> None:
         )
         defaults = {
             "mode": "review",
+            "career_stage_mode": "graduate",
+            "target_role_families": (
+                "product,project_program,agile_delivery,consulting,"
+                "change_transformation,strategy_operations"
+            ),
+            "graduate_max_required_experience_years": "2",
+            "graduate_include_internships": "false",
+            "additional_title_aliases": "",
+            "excluded_title_terms": (
+                "senior, principal, director, head of, vice president, "
+                "vp, chief, lead"
+            ),
             "role_keywords": "software engineer, developer, full stack",
             "locations": "remote, new york, nyc",
             "posted_age_mode": "days",

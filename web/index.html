@@ -150,7 +150,7 @@
                 <label>Career URLs
                   <textarea name="career_urls"></textarea>
                 </label>
-                <label>Role keywords
+                <label>Open-mode role keywords
                   <textarea name="role_keywords"></textarea>
                 </label>
                 <label>Locations
@@ -535,6 +535,66 @@
               <label>Scan interval minutes
                 <input name="scan_interval_minutes" type="number" min="0" max="1440" />
               </label>
+              <fieldset class="career-stage-settings">
+                <legend>Career target</legend>
+                <div id="careerStageControl" class="segmented-control">
+                  <label>
+                    <input name="career_stage_mode" type="radio" value="graduate" />
+                    <span>Graduate / Early Career</span>
+                  </label>
+                  <label>
+                    <input name="career_stage_mode" type="radio" value="open" />
+                    <span>Open keyword search</span>
+                  </label>
+                </div>
+                <div class="career-stage-fields" data-career-stage-mode="graduate">
+                  <label>Maximum required experience
+                    <input name="graduate_max_required_experience_years" type="number" min="0" max="20" />
+                  </label>
+                  <label class="checkbox-setting internship-setting">
+                    <input name="graduate_include_internships" type="checkbox" value="true" />
+                    <span>Include internships and placements</span>
+                  </label>
+                  <fieldset class="role-family-settings">
+                    <legend>Management role families</legend>
+                    <div class="role-family-grid">
+                      <label>
+                        <input name="target_role_families" type="checkbox" value="product" />
+                        <span>Product management</span>
+                      </label>
+                      <label>
+                        <input name="target_role_families" type="checkbox" value="project_program" />
+                        <span>Project and program</span>
+                      </label>
+                      <label>
+                        <input name="target_role_families" type="checkbox" value="agile_delivery" />
+                        <span>Agile delivery</span>
+                      </label>
+                      <label>
+                        <input name="target_role_families" type="checkbox" value="consulting" />
+                        <span>Consulting</span>
+                      </label>
+                      <label>
+                        <input name="target_role_families" type="checkbox" value="change_transformation" />
+                        <span>Change and transformation</span>
+                      </label>
+                      <label>
+                        <input name="target_role_families" type="checkbox" value="strategy_operations" />
+                        <span>Strategy and operations</span>
+                      </label>
+                    </div>
+                  </fieldset>
+                  <label class="wide-setting">Additional accepted job titles
+                    <textarea name="additional_title_aliases"></textarea>
+                  </label>
+                  <label class="wide-setting">Excluded title terms
+                    <textarea name="excluded_title_terms"></textarea>
+                  </label>
+                </div>
+                <label data-career-stage-mode="open">Role keywords
+                  <textarea name="role_keywords"></textarea>
+                </label>
+              </fieldset>
               <fieldset class="posting-age-settings">
                 <legend>Posting age</legend>
                 <div class="segmented-control">
@@ -563,9 +623,6 @@
               </label>
               <label>Contact discovery pages
                 <input name="contact_discovery_max_pages" type="number" min="1" max="20" />
-              </label>
-              <label>Role keywords
-                <textarea name="role_keywords"></textarea>
               </label>
               <label>Locations
                 <textarea name="locations"></textarea>
