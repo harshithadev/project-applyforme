@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import urllib.error
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from .broad_sources import discover_provider, provider_for, provider_keys
 from .db import all_settings, connect, log, now_iso, row, rows
 from .job_sources import (
     JobPosting,
+    SourceResult,
     canonicalize_url,
     discover_source,
     source_kind,
@@ -95,7 +98,10 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
         bool(company_blob)
         and any(term in company_blob or company_blob in term for _, term in company_terms)
     )
-    if not company_match:
+    target_company_mode = str(
+        settings.get("target_company_mode", "only") or "only"
+    ).casefold()
+    if target_company_mode == "only" and not company_match:
         return MatchDecision(False, 0, [], "company is outside the target list")
 
     location_blob = _normalized(f"{posting.location} {posting.workplace_type}")
@@ -164,7 +170,7 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
         else round(role_ratio * 60 + title_ratio * 20)
     )
     score += 10 if location_hits else 6 if not location_terms else 4 if not location_blob else 0
-    score += 5 if company_terms else 3
+    score += 5 if company_terms and company_match else 3 if not company_terms else 0
     score += 5 if age_value is not None else 2
     reasons = []
     if graduate_role:
@@ -175,8 +181,8 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
         reasons.append(f"Location: {', '.join(location_hits[:3])}")
     elif not location_blob:
         reasons.append("Location not listed")
-    if company_terms:
-        reasons.append("Target company")
+    if company_terms and company_match:
+        reasons.append("Preferred company")
     if age_reason:
         reasons.append(age_reason)
     else:
@@ -256,9 +262,9 @@ def _persist_posting(posting: JobPosting, decision: MatchDecision) -> bool:
     return True
 
 
-def _begin_source_scan(url: str) -> dict[str, object]:
+def _begin_source_scan(url: str, source_kind_override: str = "") -> dict[str, object]:
     source_url = canonicalize_url(url)
-    kind = source_kind(source_url)
+    kind = source_kind_override or source_kind(source_url)
     now = now_iso()
     with connect() as conn:
         conn.execute(
@@ -344,19 +350,104 @@ def list_source_states() -> list[dict[str, object]]:
     return states
 
 
+def _configured_provider_keys(settings: dict[str, str]) -> list[str]:
+    supported = set(provider_keys())
+    configured: list[str] = []
+    for key in split_csv(settings.get("discovery_providers", "")):
+        normalized = key.casefold()
+        if normalized in supported and normalized not in configured:
+            configured.append(normalized)
+    return configured
+
+
+def _provider_cooldown_minutes(key: str) -> int:
+    provider = provider_for(key)
+    state = row(
+        "SELECT last_success_at FROM job_source_states WHERE source_url = ?",
+        (canonicalize_url(provider.source_url),),
+    )
+    last_success = _timestamp(str(state.get("last_success_at") or "")) if state else None
+    if not last_success:
+        return 0
+    elapsed = (datetime.now(timezone.utc) - last_success).total_seconds() / 60
+    return max(0, math.ceil(provider.minimum_interval_minutes - elapsed))
+
+
+def _process_source_result(
+    source_url: str,
+    source_result: SourceResult,
+    settings: dict[str, str],
+    result: dict[str, int],
+) -> None:
+    result["errors"] += len(source_result.errors)
+    for message in source_result.errors:
+        log(message, "error")
+    for posting in source_result.postings:
+        decision = evaluate_posting(posting, settings)
+        if not decision.accepted:
+            result["filtered"] += 1
+            continue
+        if _persist_posting(posting, decision):
+            result["inserted"] += 1
+        else:
+            result["seen"] += 1
+    _finish_source_scan(
+        source_url,
+        cursor=source_result.next_cursor,
+        pages_scanned=source_result.pages_scanned,
+        jobs_seen=len(source_result.postings),
+        errors=source_result.errors,
+        metadata=source_result.metadata,
+        complete=source_result.complete,
+    )
+
+
 def discover_jobs() -> dict[str, int]:
     settings = all_settings()
     urls = split_csv(settings.get("career_urls", ""))
+    providers = _configured_provider_keys(settings)
     companies = split_csv(settings.get("target_companies", ""))
     keywords = split_csv(settings.get("role_keywords", ""))
     try:
         limit = min(200, max(1, int(settings.get("max_jobs_per_source", "80") or "80")))
     except ValueError:
         limit = 80
-    result = {"inserted": 0, "seen": 0, "filtered": 0, "errors": 0, "sources": len(urls)}
-    if not urls:
-        log("No career URLs configured. Add company career pages in Settings.", "warning")
+    result = {
+        "inserted": 0,
+        "seen": 0,
+        "filtered": 0,
+        "errors": 0,
+        "sources": len(providers) + len(urls),
+        "skipped": 0,
+    }
+    if not providers and not urls:
+        log("No discovery providers or company career URLs are enabled.", "warning")
         return result
+
+    for key in providers:
+        provider = provider_for(key)
+        remaining = _provider_cooldown_minutes(key)
+        if remaining:
+            result["skipped"] += 1
+            log(
+                f"{provider.label} scan skipped for {remaining} more minute(s) "
+                "to respect its polling interval."
+            )
+            continue
+        state = _begin_source_scan(provider.source_url, provider.key)
+        source_url = str(state["source_url"])
+        try:
+            source_result = discover_provider(key, limit)
+        except Exception as exc:
+            _fail_source_scan(source_url, exc)
+            result["errors"] += 1
+            log(
+                f"Could not scan {provider.label}.",
+                "error",
+                {"error": str(exc)},
+            )
+            continue
+        _process_source_result(source_url, source_result, settings, result)
 
     for url in urls:
         state = _begin_source_scan(url)
@@ -374,31 +465,12 @@ def discover_jobs() -> dict[str, int]:
             result["errors"] += 1
             log(f"Could not scan {url}.", "error", {"error": str(exc)})
             continue
-        result["errors"] += len(source_result.errors)
-        for message in source_result.errors:
-            log(message, "error")
-        for posting in source_result.postings:
-            decision = evaluate_posting(posting, settings)
-            if not decision.accepted:
-                result["filtered"] += 1
-                continue
-            if _persist_posting(posting, decision):
-                result["inserted"] += 1
-            else:
-                result["seen"] += 1
-        _finish_source_scan(
-            source_url,
-            cursor=source_result.next_cursor,
-            pages_scanned=source_result.pages_scanned,
-            jobs_seen=len(source_result.postings),
-            errors=source_result.errors,
-            metadata=source_result.metadata,
-            complete=source_result.complete,
-        )
+        _process_source_result(source_url, source_result, settings, result)
     log(
-        "Career scan complete: "
+        "Job discovery complete: "
         f"{result['inserted']} new, {result['seen']} refreshed, "
-        f"{result['filtered']} filtered, {result['errors']} error(s)."
+        f"{result['filtered']} filtered, {result['errors']} error(s), "
+        f"{result['skipped']} rate-limited source(s)."
     )
     return result
 

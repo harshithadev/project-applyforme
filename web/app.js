@@ -154,6 +154,7 @@ function render() {
   renderEvents("#recentEvents", data.events.slice(0, 8));
   renderEvents("#logsList", data.events);
   renderJobs(data.jobs);
+  renderAssistedSearches(data.settings);
   renderSourceStates(data.job_source_states || []);
   renderPipeline(data.pipeline || {});
   renderApprovals(data.approvals || {});
@@ -344,7 +345,7 @@ function renderEvents(selector, events) {
 function renderJobs(jobs) {
   const target = $("#jobsList");
   if (!jobs.length) {
-    target.innerHTML = `<div class="empty">Add a job manually or configure career URLs and scan.</div>`;
+    target.innerHTML = `<div class="empty">Run a job scan or add a posting manually.</div>`;
     return;
   }
   target.innerHTML = jobs.map((job) => `
@@ -370,21 +371,70 @@ function renderJobs(jobs) {
   `).join("");
 }
 
+function assistedSearchLabel(url) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  const roleIndex = parts.indexOf("role");
+  if (roleIndex < 0) return "Wellfound jobs";
+  const mode = parts[roleIndex + 1];
+  const role = parts[roleIndex + 2] || parts[roleIndex + 1] || "jobs";
+  const location = mode === "l" ? parts[roleIndex + 3] : mode === "r" ? "remote" : "";
+  const title = (value) => String(value || "")
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ");
+  return [title(role), title(location)].filter(Boolean).join(" · ");
+}
+
+function renderAssistedSearches(settings) {
+  const target = $("#assistedSearchList");
+  const searches = String(settings.wellfound_search_urls || "")
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => {
+      try {
+        const url = new URL(value);
+        const host = url.hostname.toLowerCase();
+        return url.protocol === "https:"
+          && (host === "wellfound.com" || host.endsWith(".wellfound.com"))
+          ? url
+          : null;
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+  $("#assistedSearchMeta").textContent = `${searches.length} on demand`;
+  target.innerHTML = searches.length
+    ? searches.map((url) => `
+        <a class="button-link secondary" href="${escapeHtml(url.toString())}" target="_blank" rel="noreferrer">
+          ${escapeHtml(assistedSearchLabel(url))}
+        </a>
+      `).join("")
+    : `<div class="empty">No assisted marketplace searches configured.</div>`;
+}
+
 function renderSourceStates(sources) {
   const target = $("#sourceStatesList");
-  $("#sourceStateMeta").textContent = `${sources.length} configured`;
+  $("#sourceStateMeta").textContent = `${sources.length} tracked`;
   if (!sources.length) {
-    target.innerHTML = `<div class="empty">Configured career URLs appear here after their first scan.</div>`;
+    target.innerHTML = `<div class="empty">Discovery providers and company sources appear after their first scan.</div>`;
     return;
   }
   target.innerHTML = sources.map((source) => {
     const metadata = source.metadata || {};
     const total = Number(metadata.total || 0);
     const complete = Boolean(metadata.complete_cycle);
+    const sourceLabel = metadata.provider_label || source.source_kind;
+    const attribution = String(metadata.attribution_url || "");
+    const attributionLink = attribution.startsWith("https://")
+      ? `<a href="${escapeHtml(attribution)}" target="_blank" rel="noreferrer">Source</a>`
+      : "";
     return `
       <div class="source-state-row">
         <div>
-          <strong>${escapeHtml(source.source_kind)}</strong>
+          <strong>${escapeHtml(sourceLabel)}</strong>
           <p class="meta mono">${escapeHtml(source.source_url)}</p>
           ${source.last_error ? `<p class="error-text">${escapeHtml(source.last_error)}</p>` : ""}
         </div>
@@ -394,6 +444,10 @@ function renderSourceStates(sources) {
           <span>${Number(source.pages_scanned || 0)} page${Number(source.pages_scanned || 0) === 1 ? "" : "s"}</span>
           ${total ? `<span>${total} total</span>` : ""}
           <span>${complete ? "Cycle complete" : `Next offset ${escapeHtml(source.cursor || "0")}`}</span>
+          ${metadata.minimum_interval_minutes
+            ? `<span>${Number(metadata.minimum_interval_minutes)}m minimum</span>`
+            : ""}
+          ${attributionLink}
           <span>${escapeHtml(source.last_success_at || source.last_scanned_at || "")}</span>
         </div>
       </div>
@@ -1367,12 +1421,12 @@ function setView(view) {
     overview: ["Overview", "Track documents, jobs, applications, and agent actions."],
     setup: ["Setup", "Verify local capabilities and choose a guarded operating policy."],
     documents: ["Documents", "Manage source files, extraction review, OCR, and profile evidence."],
-    jobs: ["Jobs", "Add postings, scan configured career pages, and draft packages."],
+    jobs: ["Jobs", "Scan broad providers, open assisted searches, and draft packages."],
     pipeline: ["Pipeline", "Track automatic preparation, review, and guarded browser work."],
     approvals: ["Approvals", "Review packages, browser checkpoints, outreach, and failures in one queue."],
     applications: ["Applications", "Approve, submit, or queue browser automation."],
     outreach: ["Outreach", "Review contacts, approve messages, and track delivery."],
-    settings: ["Settings", "Tune modes, limits, target companies, and source URLs."],
+    settings: ["Settings", "Tune modes, limits, discovery providers, and company sources."],
     logs: ["Logs", "Plain-English worker activity and blockers."]
   };
   $("#viewTitle").textContent = titles[view][0];
@@ -1786,10 +1840,18 @@ function bindEvents() {
     await loadState();
   });
 
-  $("#scanBtn").addEventListener("click", async () => {
-    const result = await api("/api/jobs/scan", { method: "POST", body: "{}" });
-    toast(`Scan complete: ${result.inserted} new, ${result.seen} refreshed, ${result.filtered} filtered, ${result.errors} errors.`);
-    await loadState();
+  $("#scanBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api("/api/jobs/scan", { method: "POST", body: "{}" });
+      toast(`Scan complete: ${result.inserted} new, ${result.seen} refreshed, ${result.filtered} filtered, ${result.errors} errors, ${result.skipped || 0} rate-limited.`);
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
   });
 
   $("#pipelineRunBtn").addEventListener("click", async (event) => {
@@ -1898,6 +1960,11 @@ function bindEvents() {
     payload.target_role_families = Array.from(
       event.currentTarget.querySelectorAll(
         "input[name='target_role_families']:checked"
+      )
+    ).map((field) => field.value).join(",");
+    payload.discovery_providers = Array.from(
+      event.currentTarget.querySelectorAll(
+        "input[name='discovery_providers']:checked"
       )
     ).map((field) => field.value).join(",");
     await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });

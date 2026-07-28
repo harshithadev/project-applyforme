@@ -64,6 +64,16 @@ def main() -> None:
                     "Workday",
                     "Generic company career page",
                 ]
+                provider_fields = page.locator(
+                    "input[name='discovery_providers']"
+                )
+                assert provider_fields.count() == 4
+                assert page.locator(
+                    "input[name='discovery_providers']:checked"
+                ).count() == 4
+                assert page.locator(
+                    "select[name='target_company_mode']"
+                ).input_value() == "prefer"
                 page.locator("#careerSourceType").select_option("lever")
                 assert (
                     page.locator("#careerSourceUrl").get_attribute("placeholder")
@@ -162,6 +172,12 @@ def main() -> None:
                 ).is_checked()
                 page.locator("input[name='posted_within_hours']").fill("6")
                 page.locator("input[name='include_unknown_posted_at']").uncheck()
+                page.locator(
+                    "input[name='discovery_providers'][value='remotive']"
+                ).uncheck()
+                page.locator("select[name='target_company_mode']").select_option(
+                    "only"
+                )
                 with page.expect_response("**/api/settings"):
                     page.get_by_role("button", name="Save settings").click()
                 page.wait_for_load_state("networkidle")
@@ -172,9 +188,29 @@ def main() -> None:
                 assert setting("target_role_families") == "product,consulting"
                 assert setting("graduate_max_required_experience_years") == "1"
                 assert setting("graduate_include_internships") == "true"
+                assert (
+                    setting("discovery_providers")
+                    == "jobicy,weworkremotely,arbeitnow"
+                )
+                assert setting("target_company_mode") == "only"
                 settings_desktop = Path(tmp) / "settings-desktop.png"
                 page.screenshot(path=str(settings_desktop), full_page=True)
                 assert settings_desktop.stat().st_size > 10_000
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth + 1"
+                )
+                page.locator(".nav-item[data-view='jobs']").click()
+                assisted_links = page.locator("#assistedSearchList a")
+                assert assisted_links.count() == 4
+                assert all(
+                    "wellfound.com" in href
+                    for href in assisted_links.evaluate_all(
+                        "(links) => links.map((link) => link.href)"
+                    )
+                )
+                jobs_desktop = Path(tmp) / "jobs-desktop.png"
+                page.screenshot(path=str(jobs_desktop), full_page=True)
+                assert jobs_desktop.stat().st_size > 10_000
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth + 1"
                 )
@@ -200,7 +236,12 @@ def main() -> None:
                 assert page.locator(
                     "[data-career-stage-mode='graduate']"
                 ).is_visible()
-                assert page.locator(".role-family-grid").is_visible()
+                assert page.locator(
+                    ".role-family-settings .role-family-grid"
+                ).is_visible()
+                assert page.locator(
+                    ".discovery-provider-settings"
+                ).is_visible()
                 settings_mobile = Path(tmp) / "settings-mobile.png"
                 page.screenshot(path=str(settings_mobile), full_page=True)
                 assert settings_mobile.stat().st_size > 10_000

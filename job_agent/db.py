@@ -716,7 +716,15 @@ def init_db() -> None:
             "scan_interval_minutes": "0",
             "max_jobs_per_source": "80",
             "target_companies": "",
+            "target_company_mode": "prefer",
+            "discovery_providers": "jobicy,remotive,weworkremotely,arbeitnow",
             "career_urls": "",
+            "wellfound_search_urls": (
+                "https://wellfound.com/role/r/product-manager\n"
+                "https://wellfound.com/role/r/project-manager\n"
+                "https://wellfound.com/role/l/product-manager/new-york\n"
+                "https://wellfound.com/role/l/project-manager/new-york"
+            ),
             "email_mode": "approval",
             "contact_discovery_max_pages": "8",
             "browser_headless": "true",

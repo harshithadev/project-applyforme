@@ -79,7 +79,13 @@ def main() -> None:
 
         initial = readiness.evaluate_readiness(capabilities)
         assert initial["status"] == "blocked", initial
-        assert {"documents", "discovery"} <= set(initial["summary"]["blocking"])
+        assert "documents" in set(initial["summary"]["blocking"])
+        assert "discovery" not in set(initial["summary"]["blocking"])
+        discovery = next(
+            item for item in initial["checks"] if item["id"] == "discovery"
+        )
+        assert discovery["status"] == "pass"
+        assert discovery["detail"]["discovery_providers"] == 4
         graduate_targeting = next(
             item for item in initial["checks"] if item["id"] == "targeting"
         )
@@ -95,7 +101,7 @@ def main() -> None:
             readiness.complete_setup(capabilities)
             raise AssertionError("Setup completed while required checks were blocked")
         except ValueError as exc:
-            assert "documents" in str(exc) and "discovery" in str(exc)
+            assert "documents" in str(exc)
 
         set_setting("target_role_families", "")
         missing_graduate_target = readiness.evaluate_readiness(capabilities)

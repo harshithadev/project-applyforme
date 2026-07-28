@@ -7,6 +7,7 @@ import tempfile
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterator
@@ -115,12 +116,14 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["APPLYFORME_ROOT"] = tmp
 
-        from job_agent import job_sources, jobs
+        from job_agent import broad_sources, job_sources, jobs
         from job_agent.db import init_db, rows, set_setting
 
         init_db()
+        set_setting("discovery_providers", "")
         set_setting("career_stage_mode", "open")
         set_setting("target_companies", "ExampleCo")
+        set_setting("target_company_mode", "only")
         set_setting("role_keywords", "platform engineer, Python")
         set_setting("locations", "remote")
         set_setting("posted_within_days", "14")
@@ -130,8 +133,22 @@ def main() -> None:
             first = jobs.discover_jobs()
             second = jobs.discover_jobs()
 
-        assert first == {"inserted": 1, "seen": 0, "filtered": 4, "errors": 0, "sources": 1}, first
-        assert second == {"inserted": 0, "seen": 1, "filtered": 4, "errors": 0, "sources": 1}, second
+        assert first == {
+            "inserted": 1,
+            "seen": 0,
+            "filtered": 4,
+            "errors": 0,
+            "sources": 1,
+            "skipped": 0,
+        }, first
+        assert second == {
+            "inserted": 0,
+            "seen": 1,
+            "filtered": 4,
+            "errors": 0,
+            "sources": 1,
+            "skipped": 0,
+        }, second
         generic_jobs = rows("SELECT * FROM jobs WHERE source = 'career-detail'")
         assert len(generic_jobs) == 1
         generic = generic_jobs[0]
@@ -159,6 +176,166 @@ def main() -> None:
             },
         )
         assert language_match.accepted and language_match.score >= 90
+
+        preferred_company = jobs.evaluate_posting(
+            job_sources.JobPosting(
+                title="Product Manager",
+                company="OtherCo",
+                url="https://example.test/jobs/product",
+                description="Own the product roadmap.",
+                location="Remote",
+            ),
+            {
+                "career_stage_mode": "open",
+                "role_keywords": "product manager",
+                "target_companies": "ExampleCo",
+                "target_company_mode": "prefer",
+                "locations": "remote",
+                "posted_within_days": "0",
+            },
+        )
+        assert preferred_company.accepted
+        assert "Preferred company" not in preferred_company.reasons
+        strict_company = jobs.evaluate_posting(
+            job_sources.JobPosting(
+                title="Product Manager",
+                company="OtherCo",
+                url="https://example.test/jobs/product-strict",
+                description="Own the product roadmap.",
+                location="Remote",
+            ),
+            {
+                "career_stage_mode": "open",
+                "role_keywords": "product manager",
+                "target_companies": "ExampleCo",
+                "target_company_mode": "only",
+                "locations": "remote",
+                "posted_within_days": "0",
+            },
+        )
+        assert not strict_company.accepted
+
+        now = datetime.now(timezone.utc)
+        jobicy_payload = {
+            "jobs": [
+                {
+                    "id": "jobicy-1",
+                    "jobTitle": "Associate Product Manager",
+                    "companyName": "Jobicy Example",
+                    "url": "https://jobicy.com/jobs/jobicy-1",
+                    "jobDescription": "<p>Own a product roadmap and customer research.</p>",
+                    "jobGeo": "United States",
+                    "pubDate": now.isoformat(),
+                }
+            ]
+        }
+        remotive_payload = {
+            "jobs": [
+                {
+                    "id": 201,
+                    "title": "Junior Project Manager",
+                    "company_name": "Remotive Example",
+                    "url": "https://remotive.com/remote-jobs/project-management/remotive-1",
+                    "description": "<p>Coordinate project delivery and stakeholders.</p>",
+                    "candidate_required_location": "Worldwide",
+                    "publication_date": now.isoformat(),
+                }
+            ]
+        }
+        arbeitnow_payload = {
+            "data": [
+                {
+                    "slug": "arbeitnow-1",
+                    "title": "Business Analyst",
+                    "company_name": "Arbeitnow Example",
+                    "url": "https://www.arbeitnow.com/jobs/arbeitnow-1",
+                    "description": "<p>Analyze operations and delivery metrics.</p>",
+                    "location": "United States",
+                    "remote": True,
+                    "created_at": int(now.timestamp()),
+                }
+            ]
+        }
+        wwr_feed = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel><item>
+          <title>WWR Example: Operations Manager</title>
+          <link>https://weworkremotely.com/remote-jobs/wwr-example-operations-manager</link>
+          <guid>wwr-1</guid>
+          <region>Anywhere in the World</region>
+          <pubDate>{format_datetime(now)}</pubDate>
+          <description><![CDATA[<p>Improve business operations and processes.</p>]]></description>
+        </item></channel></rss>"""
+
+        assert broad_sources.parse_jobicy_payload(jobicy_payload)[0].workplace_type == "remote"
+        assert broad_sources.parse_remotive_payload(remotive_payload)[0].source == "remotive"
+        assert broad_sources.parse_arbeitnow_payload(arbeitnow_payload)[0].company == "Arbeitnow Example"
+        assert broad_sources.parse_weworkremotely_feed(wwr_feed)[0].company == "WWR Example"
+
+        old_broad_fetch_json = broad_sources.fetch_json
+        old_broad_fetch_url = broad_sources.fetch_url
+
+        def fake_broad_fetch_json(url: str) -> object:
+            if url.startswith(broad_sources.PROVIDERS["jobicy"].source_url):
+                return jobicy_payload
+            if url.startswith(broad_sources.PROVIDERS["remotive"].source_url):
+                return remotive_payload
+            if url == broad_sources.PROVIDERS["arbeitnow"].source_url:
+                return arbeitnow_payload
+            raise AssertionError(f"Unexpected broad provider URL: {url}")
+
+        def fake_broad_fetch_url(url: str) -> str:
+            if url == broad_sources.PROVIDERS["weworkremotely"].source_url:
+                return wwr_feed
+            raise AssertionError(f"Unexpected broad provider URL: {url}")
+
+        try:
+            broad_sources.fetch_json = fake_broad_fetch_json
+            broad_sources.fetch_url = fake_broad_fetch_url
+            set_setting("career_urls", "")
+            set_setting(
+                "discovery_providers",
+                "jobicy,remotive,weworkremotely,arbeitnow",
+            )
+            set_setting("target_companies", "PreferredCo")
+            set_setting("target_company_mode", "prefer")
+            set_setting(
+                "role_keywords",
+                "product manager, project manager, business analyst, operations manager",
+            )
+            set_setting("locations", "remote")
+            set_setting("posted_within_days", "14")
+            broad_first = jobs.discover_jobs()
+            broad_second = jobs.discover_jobs()
+        finally:
+            broad_sources.fetch_json = old_broad_fetch_json
+            broad_sources.fetch_url = old_broad_fetch_url
+            set_setting("discovery_providers", "")
+            set_setting("target_company_mode", "only")
+
+        assert broad_first == {
+            "inserted": 4,
+            "seen": 0,
+            "filtered": 0,
+            "errors": 0,
+            "sources": 4,
+            "skipped": 0,
+        }, broad_first
+        assert broad_second == {
+            "inserted": 0,
+            "seen": 0,
+            "filtered": 0,
+            "errors": 0,
+            "sources": 4,
+            "skipped": 4,
+        }, broad_second
+        broad_states = {
+            state["source_kind"]: state
+            for state in jobs.list_source_states()
+            if state["source_kind"] in broad_sources.PROVIDERS
+        }
+        assert set(broad_states) == set(broad_sources.PROVIDERS)
+        assert all(state["scan_count"] == 1 for state in broad_states.values())
+        assert all(state["metadata"]["attribution_url"] for state in broad_states.values())
 
         age_filter_base = {
             "role_keywords": "Python",
@@ -513,6 +690,7 @@ def main() -> None:
             "filtered": 0,
             "errors": 0,
             "sources": 3,
+            "skipped": 0,
         }, native_first
         assert native_second == {
             "inserted": 6,
@@ -520,6 +698,7 @@ def main() -> None:
             "filtered": 0,
             "errors": 0,
             "sources": 3,
+            "skipped": 0,
         }, native_second
         assert set(first_states) == {"ashby", "smartrecruiters", "workday"}
         assert all(state["cursor"] == "3" for state in first_states.values()), first_states

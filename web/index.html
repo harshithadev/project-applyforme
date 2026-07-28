@@ -147,7 +147,7 @@
                 <label>Daily application limit
                   <input name="daily_application_limit" type="number" min="1" max="200" />
                 </label>
-                <label>Career URLs
+                <label>Additional company career URLs
                   <textarea name="career_urls"></textarea>
                 </label>
                 <label>Open-mode role keywords
@@ -241,6 +241,15 @@
         </section>
 
         <section id="jobs" class="view">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Assisted Marketplace Searches</h3>
+                <span id="assistedSearchMeta"></span>
+              </div>
+            </div>
+            <div id="assistedSearchList" class="assisted-search-list"></div>
+          </section>
           <section class="panel">
             <div class="panel-head">
               <h3>Add Job</h3>
@@ -621,17 +630,44 @@
               <label>Maximum jobs per source
                 <input name="max_jobs_per_source" type="number" min="1" max="200" />
               </label>
+              <fieldset class="discovery-provider-settings">
+                <legend>Automatic discovery providers</legend>
+                <div class="role-family-grid">
+                  <label>
+                    <input name="discovery_providers" type="checkbox" value="jobicy" />
+                    <span>Jobicy</span>
+                  </label>
+                  <label>
+                    <input name="discovery_providers" type="checkbox" value="remotive" />
+                    <span>Remotive</span>
+                  </label>
+                  <label>
+                    <input name="discovery_providers" type="checkbox" value="weworkremotely" />
+                    <span>We Work Remotely</span>
+                  </label>
+                  <label>
+                    <input name="discovery_providers" type="checkbox" value="arbeitnow" />
+                    <span>Arbeitnow</span>
+                  </label>
+                </div>
+              </fieldset>
               <label>Contact discovery pages
                 <input name="contact_discovery_max_pages" type="number" min="1" max="20" />
               </label>
               <label>Locations
                 <textarea name="locations"></textarea>
               </label>
-              <label>Target companies
+              <label>Preferred companies
                 <textarea name="target_companies"></textarea>
               </label>
+              <label>Preferred company handling
+                <select name="target_company_mode">
+                  <option value="prefer">Boost matching companies</option>
+                  <option value="only">Only matching companies</option>
+                </select>
+              </label>
               <fieldset class="career-source-builder">
-                <legend>Add career source</legend>
+                <legend>Add company career source</legend>
                 <label>Source type
                   <select id="careerSourceType">
                     <option value="greenhouse">Greenhouse</option>
@@ -647,8 +683,11 @@
                 </label>
                 <button id="addCareerSourceBtn" type="button" class="secondary">Add source</button>
               </fieldset>
-              <label class="wide-setting">Career URLs
+              <label class="wide-setting">Additional company career URLs
                 <textarea name="career_urls"></textarea>
+              </label>
+              <label class="wide-setting">Wellfound assisted search URLs
+                <textarea name="wellfound_search_urls"></textarea>
               </label>
               <button type="submit">Save settings</button>
             </form>

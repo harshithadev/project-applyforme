@@ -119,6 +119,7 @@ def evaluate_readiness(
     )
 
     career_urls = _values(settings.get("career_urls"))
+    discovery_providers = _values(settings.get("discovery_providers"))
     role_keywords = _values(settings.get("role_keywords"))
     role_families = _values(settings.get("target_role_families"))
     additional_title_aliases = _values(settings.get("additional_title_aliases"))
@@ -148,7 +149,7 @@ def evaluate_readiness(
         )
     targeting_ready = bool(role_targets and locations)
     job_count = int((row("SELECT COUNT(*) AS count FROM jobs") or {"count": 0})["count"])
-    discovery_ready = bool(career_urls or job_count)
+    discovery_ready = bool(discovery_providers or career_urls or job_count)
     email_configured = bool(email_value.get("configured"))
     email_verified = (
         settings.get("smtp_verification_status") == "verified"
@@ -252,13 +253,19 @@ def evaluate_readiness(
             "Job discovery input",
             "pass" if discovery_ready else "blocked",
             (
-                f"{len(career_urls)} career source(s) and {job_count} saved job(s) are available."
+                f"{len(discovery_providers)} broad provider(s), "
+                f"{len(career_urls)} company source(s), and "
+                f"{job_count} saved job(s) are available."
                 if discovery_ready
-                else "Add at least one career URL or save a job manually."
+                else "Enable a discovery provider, add a company URL, or save a job manually."
             ),
             required=True,
             view="jobs",
-            detail={"career_sources": len(career_urls), "saved_jobs": job_count},
+            detail={
+                "discovery_providers": len(discovery_providers),
+                "career_sources": len(career_urls),
+                "saved_jobs": job_count,
+            },
         ),
         _check(
             "targeting",

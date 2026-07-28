@@ -10,7 +10,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Secure website uploads, automatic folder reconciliation, duplicate detection, and local scanned-PDF OCR.
 - Document review, classification, extraction confidence, archive, restore, and removal controls.
 - A source-grounded structured candidate profile with contact, skills, education, certifications, and evidence.
-- Manual job entry and enriched career-page scanning with Greenhouse, Lever, Ashby, SmartRecruiters, and Workday adapters.
+- Default broad discovery through Jobicy, Remotive, We Work Remotely, and Arbeitnow, plus manual job entry and enriched company career-page scanning.
 - Persistent per-source cursors, pagination status, scan counts, and errors in the dashboard.
 - Graduate and early-career management matching across product, project/program, agile delivery, consulting, change/transformation, and strategy/operations roles.
 - Role, company, location, and toggleable hour/calendar-day posting-age filters with canonical URL and ATS-ID deduplication.
@@ -167,7 +167,13 @@ npm run test:documents
 
 ## Job sources
 
-Add company career pages under **Settings > Add career source**. The built-in source-type menu includes Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and generic company career pages. Select the platform, paste a specific company's board URL, and use **Add source**; the validated URL is persisted in **Career URLs**. Scans fetch complete descriptions, normalize location and posting dates where the source exposes them, and retain matching reasons with each job. These public discovery feeds do not require API credentials.
+**Scan jobs** searches the enabled broad providers first: Jobicy, Remotive, We Work Remotely, and Arbeitnow. They are enabled by default under **Settings > Automatic discovery providers** and do not need API credentials. Results retain the provider posting URL and attribution. Persistent provider state prevents repeated requests inside each source's published polling interval.
+
+Company boards are supplemental. Add them under **Settings > Add company career source**. The source-type menu includes Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and generic company career pages. Select the platform, paste a specific company's board URL, and use **Add source**. Scans fetch complete descriptions, normalize location and posting dates where exposed, and retain matching reasons with each job.
+
+Preferred companies boost matching results by default without hiding jobs from other employers. Switch **Preferred company handling** to **Only matching companies** for a strict allowlist.
+
+Wellfound is available as an assisted, on-demand path rather than an automated bulk source. The **Jobs > Assisted Marketplace Searches** links open the configured role and location searches in the browser. Edit those links under **Settings > Wellfound assisted search URLs**. Listings are not harvested or scheduled in the background.
 
 **Graduate / Early Career** is the default career target. Select any combination of Product management, Project and program, Agile delivery, Consulting, Change and transformation, and Strategy and operations. The matcher recognizes conservative early-career title variants, graduate programmes, and user-supplied title aliases. Management terms in a description affect scoring but cannot make an unrelated job title eligible.
 

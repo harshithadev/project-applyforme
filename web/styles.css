@@ -360,6 +360,12 @@ main {
   display: grid;
 }
 
+.assisted-search-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .source-state-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1414,7 +1420,8 @@ main {
 }
 
 .career-stage-settings,
-.posting-age-settings {
+.posting-age-settings,
+.discovery-provider-settings {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
@@ -1427,7 +1434,8 @@ main {
 }
 
 .career-stage-settings > legend,
-.posting-age-settings > legend {
+.posting-age-settings > legend,
+.discovery-provider-settings > legend {
   padding: 0 0 8px;
   color: var(--ink);
   font-size: 13px;
@@ -1666,7 +1674,8 @@ textarea {
   .career-stage-settings,
   .career-stage-fields,
   .career-source-builder,
-  .posting-age-settings {
+  .posting-age-settings,
+  .discovery-provider-settings {
     grid-template-columns: 1fr;
   }
 

@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterator
@@ -226,6 +227,7 @@ def main() -> None:
             browser_diagnostics,
             browser_recovery,
             browser_sessions,
+            broad_sources,
             contact_discovery,
             emailer,
             job_sources,
@@ -241,6 +243,7 @@ def main() -> None:
         from job_agent.latex import available_latex_engine
 
         init_db()
+        set_setting("discovery_providers", "")
 
         service_paths = service.service_paths(project_root=REPO_ROOT)
         service_definition = service.launch_agent_definition(service_paths)
@@ -305,6 +308,105 @@ def main() -> None:
             if source_state_ready
             else f"Source state was incomplete: {source_state}",
         )
+
+        provider_now = datetime.now(timezone.utc)
+        provider_payloads = {
+            "jobicy": {
+                "jobs": [{
+                    "id": "audit-jobicy",
+                    "jobTitle": "Project Coordinator",
+                    "companyName": "Jobicy Audit",
+                    "url": "https://jobicy.com/jobs/audit-jobicy",
+                    "jobDescription": "Coordinate delivery.",
+                    "jobGeo": "Remote",
+                    "pubDate": provider_now.isoformat(),
+                }]
+            },
+            "remotive": {
+                "jobs": [{
+                    "id": "audit-remotive",
+                    "title": "Project Coordinator",
+                    "company_name": "Remotive Audit",
+                    "url": "https://remotive.com/remote-jobs/audit-remotive",
+                    "description": "Coordinate delivery.",
+                    "candidate_required_location": "Remote",
+                    "publication_date": provider_now.isoformat(),
+                }]
+            },
+            "arbeitnow": {
+                "data": [{
+                    "slug": "audit-arbeitnow",
+                    "title": "Project Coordinator",
+                    "company_name": "Arbeitnow Audit",
+                    "url": "https://www.arbeitnow.com/jobs/audit-arbeitnow",
+                    "description": "Coordinate delivery.",
+                    "location": "Remote",
+                    "remote": True,
+                    "created_at": int(provider_now.timestamp()),
+                }]
+            },
+        }
+        provider_feed = f"""<rss version="2.0"><channel><item>
+        <title>WWR Audit: Project Coordinator</title>
+        <link>https://weworkremotely.com/remote-jobs/audit-wwr</link>
+        <guid>audit-wwr</guid><region>Remote</region>
+        <pubDate>{format_datetime(provider_now)}</pubDate>
+        <description>Coordinate delivery.</description>
+        </item></channel></rss>"""
+        old_provider_json = broad_sources.fetch_json
+        old_provider_url = broad_sources.fetch_url
+
+        def fake_provider_json(url: str) -> object:
+            if url.startswith(broad_sources.PROVIDERS["jobicy"].source_url):
+                return provider_payloads["jobicy"]
+            if url.startswith(broad_sources.PROVIDERS["remotive"].source_url):
+                return provider_payloads["remotive"]
+            if url == broad_sources.PROVIDERS["arbeitnow"].source_url:
+                return provider_payloads["arbeitnow"]
+            raise AssertionError(f"Unexpected provider URL: {url}")
+
+        def fake_provider_url(url: str) -> str:
+            if url == broad_sources.PROVIDERS["weworkremotely"].source_url:
+                return provider_feed
+            raise AssertionError(f"Unexpected provider URL: {url}")
+
+        try:
+            broad_sources.fetch_json = fake_provider_json
+            broad_sources.fetch_url = fake_provider_url
+            set_setting("career_urls", "")
+            set_setting(
+                "discovery_providers",
+                "jobicy,remotive,weworkremotely,arbeitnow",
+            )
+            set_setting("career_stage_mode", "open")
+            set_setting("role_keywords", "project coordinator")
+            set_setting("target_companies", "Preferred Audit Company")
+            set_setting("target_company_mode", "prefer")
+            set_setting("locations", "remote")
+            provider_scan = jobs.discover_jobs()
+        finally:
+            broad_sources.fetch_json = old_provider_json
+            broad_sources.fetch_url = old_provider_url
+            set_setting("discovery_providers", "")
+
+        provider_states = {
+            state["source_kind"]
+            for state in jobs.list_source_states()
+            if state["source_kind"] in broad_sources.PROVIDERS
+        }
+        provider_ok = (
+            provider_scan["inserted"] == 4
+            and provider_scan["errors"] == 0
+            and provider_states == set(broad_sources.PROVIDERS)
+        )
+        record(
+            "PASS" if provider_ok else "FAIL",
+            "Broad job discovery providers",
+            "Scan jobs normalizes Jobicy, Remotive, We Work Remotely, and Arbeitnow with persistent source state."
+            if provider_ok
+            else f"Scan={provider_scan}, states={sorted(provider_states)}",
+        )
+
         discovered_job = row("SELECT * FROM jobs WHERE source = 'career-detail' LIMIT 1")
         if (
             discovered_job
