@@ -196,6 +196,23 @@ def main() -> None:
         )
         assert preferred_company.accepted
         assert "Preferred company" not in preferred_company.reasons
+        unrestricted_location = jobs.evaluate_posting(
+            job_sources.JobPosting(
+                title="Product Manager",
+                company="ExampleCo",
+                url="https://example.test/jobs/product-anywhere",
+                description="Own the product roadmap.",
+                location="Singapore",
+            ),
+            {
+                "career_stage_mode": "open",
+                "role_keywords": "product manager",
+                "target_companies": "",
+                "locations": "",
+                "posted_within_days": "0",
+            },
+        )
+        assert unrestricted_location.accepted
         strict_company = jobs.evaluate_posting(
             job_sources.JobPosting(
                 title="Product Manager",

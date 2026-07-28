@@ -132,22 +132,21 @@ def evaluate_readiness(
         targeting_message = (
             f"{len(role_families)} management role family(s), "
             f"{len(additional_title_aliases)} additional title(s), and "
-            f"{len(locations)} location preference(s) are configured."
-            if role_targets and locations
+            f"{len(locations)} optional location preference(s) are configured."
+            if role_targets
             else (
-                "Select a management role family or add an accepted title, "
-                "then add a location preference."
+                "Select a management role family or add an accepted title."
             )
         )
     else:
         role_targets = role_keywords
         targeting_message = (
             f"{len(role_keywords)} role keyword(s) and "
-            f"{len(locations)} location preference(s) are configured."
-            if role_keywords and locations
-            else "Add at least one role keyword and location preference."
+            f"{len(locations)} optional location preference(s) are configured."
+            if role_keywords
+            else "Add at least one role keyword."
         )
-    targeting_ready = bool(role_targets and locations)
+    targeting_ready = bool(role_targets)
     job_count = int((row("SELECT COUNT(*) AS count FROM jobs") or {"count": 0})["count"])
     discovery_ready = bool(discovery_providers or career_urls or job_count)
     email_configured = bool(email_value.get("configured"))

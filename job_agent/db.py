@@ -706,7 +706,7 @@ def init_db() -> None:
                 "vp, chief, lead"
             ),
             "role_keywords": "software engineer, developer, full stack",
-            "locations": "remote, new york, nyc",
+            "locations": "",
             "posted_age_mode": "days",
             "posted_within_hours": "24",
             "posted_within_days": "14",

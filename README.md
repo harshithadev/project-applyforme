@@ -181,6 +181,8 @@ The required-experience ceiling defaults to three years. Explicit requirements a
 
 Ashby, SmartRecruiters, and Workday scans paginate up to **Max jobs per source** per run. The next offset is stored in SQLite and resumed on the next scan; the **Source scans** panel shows progress, errors, and when a full cycle completes.
 
+Location preferences are optional. Leave **Locations** empty to accept jobs from any location; adding values turns them into an allowlist for postings that expose a location.
+
 The posting-age filter can run in **Hours** or **Calendar days** mode. Hours mode applies an exact elapsed-time cutoff and therefore requires a source timestamp. Calendar days mode uses local calendar dates and includes sources that publish only a date without a time. **Include jobs without a posting date** separately controls postings whose source supplies no date at all.
 
 Run the discovery, posting-age, and graduate management matcher tests with:

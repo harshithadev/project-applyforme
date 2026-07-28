@@ -93,6 +93,7 @@ def main() -> None:
         assert graduate_targeting["view"] == "settings"
         assert graduate_targeting["detail"]["career_stage_mode"] == "graduate"
         assert graduate_targeting["detail"]["role_families"] == 6
+        assert graduate_targeting["detail"]["locations"] == 0
         assert "management role family" in graduate_targeting["message"]
         assert not next(
             item for item in initial["modes"] if item["id"] == "review_automation"
