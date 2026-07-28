@@ -1484,6 +1484,31 @@ main {
   grid-column: 1 / -1;
 }
 
+.career-source-builder {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(300px, 1.5fr) auto;
+  gap: 10px 16px;
+  align-items: end;
+  margin: 0;
+  padding: 12px 0 2px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.career-source-builder legend {
+  padding: 0 0 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.career-source-builder button {
+  grid-column: auto;
+  min-height: 36px;
+  white-space: nowrap;
+}
+
 .segmented-control {
   display: grid;
   grid-column: 1 / -1;
@@ -1640,6 +1665,7 @@ textarea {
 
   .career-stage-settings,
   .career-stage-fields,
+  .career-source-builder,
   .posting-age-settings {
     grid-template-columns: 1fr;
   }

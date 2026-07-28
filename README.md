@@ -167,7 +167,7 @@ npm run test:documents
 
 ## Job sources
 
-Add company career pages or public Greenhouse, Lever, Ashby, SmartRecruiters, and Workday career-site URLs under **Settings > Career URLs**. Scans fetch complete descriptions, normalize location and posting dates where the source exposes them, and retain matching reasons with each job. These public discovery feeds do not require API credentials.
+Add company career pages under **Settings > Add career source**. The built-in source-type menu includes Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and generic company career pages. Select the platform, paste a specific company's board URL, and use **Add source**; the validated URL is persisted in **Career URLs**. Scans fetch complete descriptions, normalize location and posting dates where the source exposes them, and retain matching reasons with each job. These public discovery feeds do not require API credentials.
 
 **Graduate / Early Career** is the default career target. Select any combination of Product management, Project and program, Agile delivery, Consulting, Change and transformation, and Strategy and operations. The matcher recognizes conservative early-career title variants, graduate programmes, and user-supplied title aliases. Management terms in a description affect scoring but cannot make an unrelated job title eligible.
 

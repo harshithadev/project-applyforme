@@ -630,7 +630,24 @@
               <label>Target companies
                 <textarea name="target_companies"></textarea>
               </label>
-              <label>Career URLs
+              <fieldset class="career-source-builder">
+                <legend>Add career source</legend>
+                <label>Source type
+                  <select id="careerSourceType">
+                    <option value="greenhouse">Greenhouse</option>
+                    <option value="lever">Lever</option>
+                    <option value="ashby">Ashby</option>
+                    <option value="smartrecruiters">SmartRecruiters</option>
+                    <option value="workday">Workday</option>
+                    <option value="generic">Generic company career page</option>
+                  </select>
+                </label>
+                <label>Company board URL
+                  <input id="careerSourceUrl" type="url" />
+                </label>
+                <button id="addCareerSourceBtn" type="button" class="secondary">Add source</button>
+              </fieldset>
+              <label class="wide-setting">Career URLs
                 <textarea name="career_urls"></textarea>
               </label>
               <button type="submit">Save settings</button>

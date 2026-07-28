@@ -18,7 +18,7 @@ def main() -> None:
 
         from job_agent import app
         from job_agent.db import init_db, setting
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import expect, sync_playwright
 
         init_db()
         app.WEB_DIR = REPO_ROOT / "web"
@@ -54,6 +54,41 @@ def main() -> None:
                     "5 versioned"
                 )
                 page.locator(".nav-item[data-view='settings']").click()
+                source_types = page.locator("#careerSourceType option")
+                assert source_types.count() == 6
+                assert source_types.all_text_contents() == [
+                    "Greenhouse",
+                    "Lever",
+                    "Ashby",
+                    "SmartRecruiters",
+                    "Workday",
+                    "Generic company career page",
+                ]
+                page.locator("#careerSourceType").select_option("lever")
+                assert (
+                    page.locator("#careerSourceUrl").get_attribute("placeholder")
+                    == "https://jobs.lever.co/company"
+                )
+                page.locator("#careerSourceUrl").fill("https://jobs.lever.co")
+                page.get_by_role("button", name="Add source").click()
+                expect(page.locator("#toast")).to_have_text(
+                    "Enter a Lever company board URL."
+                )
+                assert setting("career_urls") == ""
+                page.locator("#careerSourceUrl").fill(
+                    "https://jobs.lever.co/exampleco"
+                )
+                with page.expect_response("**/api/settings"):
+                    page.get_by_role("button", name="Add source").click()
+                assert (
+                    setting("career_urls")
+                    == "https://jobs.lever.co/exampleco"
+                )
+                expect(
+                    page.locator("#settingsForm textarea[name='career_urls']")
+                ).to_have_value(
+                    "https://jobs.lever.co/exampleco"
+                )
                 assert page.locator(
                     "input[name='career_stage_mode'][value='graduate']"
                 ).is_checked()

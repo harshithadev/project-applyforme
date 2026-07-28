@@ -7,6 +7,39 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
+const careerSourceTypes = {
+  greenhouse: {
+    label: "Greenhouse",
+    placeholder: "https://boards.greenhouse.io/company",
+    hosts: ["greenhouse.io"]
+  },
+  lever: {
+    label: "Lever",
+    placeholder: "https://jobs.lever.co/company",
+    hosts: ["lever.co"]
+  },
+  ashby: {
+    label: "Ashby",
+    placeholder: "https://jobs.ashbyhq.com/company",
+    hosts: ["ashbyhq.com"]
+  },
+  smartrecruiters: {
+    label: "SmartRecruiters",
+    placeholder: "https://jobs.smartrecruiters.com/company",
+    hosts: ["smartrecruiters.com"]
+  },
+  workday: {
+    label: "Workday",
+    placeholder: "https://company.wd5.myworkdayjobs.com/Careers",
+    hosts: ["myworkdayjobs.com", "myworkdaysite.com"]
+  },
+  generic: {
+    label: "Generic career page",
+    placeholder: "https://company.example/careers",
+    hosts: []
+  }
+};
+
 function toast(message) {
   const el = $("#toast");
   el.textContent = message;
@@ -1309,6 +1342,23 @@ function updatePostingAgeControls(form) {
   });
 }
 
+function updateCareerSourceInput() {
+  const config = careerSourceTypes[$("#careerSourceType")?.value];
+  if ($("#careerSourceUrl") && config) {
+    $("#careerSourceUrl").placeholder = config.placeholder;
+  }
+}
+
+function careerSourceMatchesType(url, config) {
+  if (!config.hosts.length) return true;
+  const hostname = url.hostname.toLowerCase();
+  const hostMatches = config.hosts.some(
+    (host) => hostname === host || hostname.endsWith(`.${host}`)
+  );
+  const hasCompanyPath = url.pathname.split("/").some(Boolean);
+  return hostMatches && hasCompanyPath;
+}
+
 function setView(view) {
   state.activeView = view;
   $$(".view").forEach((el) => el.classList.toggle("active", el.id === view));
@@ -1869,6 +1919,57 @@ function bindEvents() {
 
   $("#settingsForm").querySelectorAll("input[name='career_stage_mode']").forEach((field) => {
     field.addEventListener("change", () => updateCareerStageControls($("#settingsForm")));
+  });
+
+  $("#careerSourceType").addEventListener("change", updateCareerSourceInput);
+  updateCareerSourceInput();
+
+  $("#addCareerSourceBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const type = $("#careerSourceType").value;
+    const config = careerSourceTypes[type];
+    const rawUrl = $("#careerSourceUrl").value.trim();
+    let parsed;
+    try {
+      parsed = new URL(rawUrl);
+      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error();
+    } catch {
+      toast("Enter a valid company career URL.");
+      return;
+    }
+    if (!careerSourceMatchesType(parsed, config)) {
+      toast(`Enter a ${config.label} company board URL.`);
+      return;
+    }
+
+    parsed.hash = "";
+    const sourceUrl = parsed.toString();
+    const sourceKey = sourceUrl.replace(/\/$/, "").toLowerCase();
+    const field = $("#settingsForm").elements.career_urls;
+    const sources = String(field.value || "")
+      .split(/[\n,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (sources.some((item) => item.replace(/\/$/, "").toLowerCase() === sourceKey)) {
+      toast("That career source is already configured.");
+      return;
+    }
+
+    button.disabled = true;
+    try {
+      const careerUrls = [...sources, sourceUrl].join("\n");
+      await api("/api/settings", {
+        method: "POST",
+        body: JSON.stringify({ career_urls: careerUrls })
+      });
+      $("#careerSourceUrl").value = "";
+      toast(`${config.label} source added.`);
+      await loadState();
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
   });
 
   $("#ruleForm").addEventListener("submit", async (event) => {
