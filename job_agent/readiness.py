@@ -119,6 +119,7 @@ def evaluate_readiness(
     )
 
     career_urls = _values(settings.get("career_urls"))
+    github_board_urls = _values(settings.get("github_job_board_urls"))
     discovery_providers = _values(settings.get("discovery_providers"))
     role_keywords = _values(settings.get("role_keywords"))
     role_families = _values(settings.get("target_role_families"))
@@ -148,7 +149,9 @@ def evaluate_readiness(
         )
     targeting_ready = bool(role_targets)
     job_count = int((row("SELECT COUNT(*) AS count FROM jobs") or {"count": 0})["count"])
-    discovery_ready = bool(discovery_providers or career_urls or job_count)
+    discovery_ready = bool(
+        discovery_providers or github_board_urls or career_urls or job_count
+    )
     email_configured = bool(email_value.get("configured"))
     email_verified = (
         settings.get("smtp_verification_status") == "verified"
@@ -253,15 +256,20 @@ def evaluate_readiness(
             "pass" if discovery_ready else "blocked",
             (
                 f"{len(discovery_providers)} broad provider(s), "
+                f"{len(github_board_urls)} public GitHub board(s), "
                 f"{len(career_urls)} company source(s), and "
                 f"{job_count} saved job(s) are available."
                 if discovery_ready
-                else "Enable a discovery provider, add a company URL, or save a job manually."
+                else (
+                    "Enable a discovery provider, add a GitHub board or company "
+                    "URL, or save a job manually."
+                )
             ),
             required=True,
             view="jobs",
             detail={
                 "discovery_providers": len(discovery_providers),
+                "github_boards": len(github_board_urls),
                 "career_sources": len(career_urls),
                 "saved_jobs": job_count,
             },

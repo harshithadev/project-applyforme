@@ -136,6 +136,20 @@ def main() -> None:
     assert not internship.accepted and "internships are excluded" in internship.rejection
     assert included_internship.accepted, included_internship
 
+    product_manager_intern = evaluate(
+        "Product Manager Intern",
+        "Support product strategy and delivery.",
+        {"graduate_include_internships": "true"},
+    )
+    assert product_manager_intern.accepted, product_manager_intern
+
+    quantitative_strategy_intern = evaluate(
+        "Quantitative Development & Strategy Intern",
+        "Develop quantitative trading systems.",
+        {"graduate_include_internships": "true"},
+    )
+    assert not quantitative_strategy_intern.accepted, quantitative_strategy_intern
+
     custom_title = evaluate(
         "Transformation Partner",
         "Support organizational change and adoption.",

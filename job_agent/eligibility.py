@@ -16,6 +16,7 @@ class WorkAuthorization:
 
 NEGATIVE_SPONSORSHIP_PATTERNS = (
     re.compile(r"\b(?:no|without)\s+(?:visa\s+)?sponsorship\b", re.IGNORECASE),
+    re.compile(r"\bno\s+future\s+(?:visa\s+)?sponsorship\b", re.IGNORECASE),
     re.compile(r"\b(?:will|do|does|can)(?:\s+not|n't)\s+sponsor\b", re.IGNORECASE),
     re.compile(r"\bunable\s+to\s+(?:provide\s+)?sponsor", re.IGNORECASE),
     re.compile(r"\bnot\s+(?:eligible|available)\s+for\s+(?:visa\s+)?sponsorship\b", re.IGNORECASE),
@@ -24,6 +25,9 @@ NEGATIVE_SPONSORSHIP_PATTERNS = (
         r"(?:\s+now\s+or\s+in\s+the\s+future)?\b",
         re.IGNORECASE,
     ),
+    re.compile(r"\brequires?\s+(?:u\.?s\.?\s+)?citizenship\b", re.IGNORECASE),
+    re.compile(r"\bmust\s+be\s+(?:a\s+)?u\.?s\.?\s+citizen\b", re.IGNORECASE),
+    re.compile(r"\bu\.?s\.?\s+citizens?\s+only\b", re.IGNORECASE),
 )
 OPT_CPT_PATTERNS = (
     re.compile(r"\bCPT\b", re.IGNORECASE),

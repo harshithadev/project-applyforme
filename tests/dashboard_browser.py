@@ -81,10 +81,10 @@ def main() -> None:
                 provider_fields = page.locator(
                     "input[name='discovery_providers']"
                 )
-                assert provider_fields.count() == 4
+                assert provider_fields.count() == 5
                 assert page.locator(
                     "input[name='discovery_providers']:checked"
-                ).count() == 4
+                ).count() == 5
                 assert page.locator(
                     "select[name='target_company_mode']"
                 ).input_value() == "prefer"
@@ -215,7 +215,7 @@ def main() -> None:
                 assert setting("sponsorship_unknown_handling") == "review"
                 assert (
                     setting("discovery_providers")
-                    == "jobicy,weworkremotely,arbeitnow"
+                    == "jobicy,weworkremotely,arbeitnow,himalayas"
                 )
                 assert setting("target_company_mode") == "only"
                 settings_desktop = Path(tmp) / "settings-desktop.png"
@@ -226,13 +226,12 @@ def main() -> None:
                 )
                 page.locator(".nav-item[data-view='jobs']").click()
                 assisted_links = page.locator("#assistedSearchList a")
-                assert assisted_links.count() == 4
-                assert all(
-                    "wellfound.com" in href
-                    for href in assisted_links.evaluate_all(
-                        "(links) => links.map((link) => link.href)"
-                    )
+                assert assisted_links.count() == 14
+                assisted_hrefs = assisted_links.evaluate_all(
+                    "(links) => links.map((link) => link.href)"
                 )
+                assert sum("wellfound.com" in href for href in assisted_hrefs) == 4
+                assert any("hiring.cafe" in href for href in assisted_hrefs)
                 jobs_desktop = Path(tmp) / "jobs-desktop.png"
                 page.screenshot(path=str(jobs_desktop), full_page=True)
                 assert jobs_desktop.stat().st_size > 10_000

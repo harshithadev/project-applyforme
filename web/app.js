@@ -482,15 +482,23 @@ function renderWorkflow(data) {
   $("#scanBtn").textContent = state.scanRunning ? "Scanning..." : "Scan now";
 
   const scanMessage = $("#workflowScanMessage");
+  const rejectionSummary = $("#workflowRejectionSummary");
   if (state.scanRunning) {
     scanMessage.textContent = "Refreshing every enabled source.";
+    rejectionSummary.innerHTML = "";
   } else if (state.scanResult) {
     const result = state.scanResult;
-    scanMessage.textContent = `${Number(result.inserted || 0)} new · ${Number(result.seen || 0)} refreshed · ${Number(result.filtered || 0)} filtered · ${Number(result.errors || 0)} errors`;
+    scanMessage.textContent = `${Number(result.checked || 0)} checked · ${Number(result.inserted || 0)} new · ${Number(result.seen || 0)} refreshed · ${Number(result.filtered || 0)} filtered · ${Number(result.errors || 0)} errors`;
+    const rejections = Object.entries(result.rejections || {})
+      .sort((left, right) => Number(right[1]) - Number(left[1]));
+    rejectionSummary.innerHTML = rejections.map(([reason, count]) => `
+      <span>${Number(count)} ${escapeHtml(reason)}</span>
+    `).join("");
   } else {
     scanMessage.textContent = data.job_source_states.length
       ? "Ready to refresh all enabled sources."
       : "No source scan has completed yet.";
+    rejectionSummary.innerHTML = "";
   }
 
   $("#workflowSourceProgress").innerHTML = (data.job_source_states || []).map((source) => {
@@ -576,9 +584,22 @@ function assistedSearchLabel(url) {
   return [title(role), title(location)].filter(Boolean).join(" · ");
 }
 
+const assistedSourceCatalog = [
+  ["HiringCafe", "https://hiring.cafe/"],
+  ["APM Career", "https://apmcareer.com/"],
+  ["APM Season", "https://www.apmseason.com/"],
+  ["APM List", "https://apmlist.com/"],
+  ["PMI Job Board", "https://pmjobs.pmi.org/jobs/?keywords=intern"],
+  ["Mind the Product", "https://www.mindtheproduct.com/jobs/"],
+  ["Y Combinator Internships", "https://www.ycombinator.com/internships"],
+  ["Built In", "https://builtin.com/jobs"],
+  ["Handshake", "https://app.joinhandshake.com/job-search"],
+  ["RippleMatch", "https://app.ripplematch.com/v2/public/jobs-internships"],
+];
+
 function renderAssistedSearches(settings) {
   const target = $("#assistedSearchList");
-  const searches = String(settings.wellfound_search_urls || "")
+  const wellfoundSearches = String(settings.wellfound_search_urls || "")
     .split(/[\n,]+/)
     .map((value) => value.trim())
     .filter(Boolean)
@@ -588,18 +609,22 @@ function renderAssistedSearches(settings) {
         const host = url.hostname.toLowerCase();
         return url.protocol === "https:"
           && (host === "wellfound.com" || host.endsWith(".wellfound.com"))
-          ? url
+          ? [assistedSearchLabel(url), url]
           : null;
       } catch {
         return null;
       }
     })
     .filter(Boolean);
+  const searches = [
+    ...assistedSourceCatalog.map(([label, value]) => [label, new URL(value)]),
+    ...wellfoundSearches,
+  ];
   $("#assistedSearchMeta").textContent = `${searches.length} on demand`;
   target.innerHTML = searches.length
-    ? searches.map((url) => `
+    ? searches.map(([label, url]) => `
         <a class="button-link secondary" href="${escapeHtml(url.toString())}" target="_blank" rel="noreferrer">
-          ${escapeHtml(assistedSearchLabel(url))}
+          ${escapeHtml(label)}
         </a>
       `).join("")
     : `<div class="empty">No assisted marketplace searches configured.</div>`;
@@ -2115,7 +2140,7 @@ function bindEvents() {
       });
       const result = await api("/api/jobs/scan", { method: "POST", body: "{}" });
       state.scanResult = result;
-      toast(`Scan complete: ${result.inserted} new, ${result.seen} refreshed, ${result.filtered} filtered, ${result.errors} errors, ${result.skipped || 0} rate-limited.`);
+      toast(`Scan complete: ${result.checked || 0} checked, ${result.inserted} new, ${result.seen} refreshed, ${result.filtered} filtered, ${result.errors} errors.`);
     } catch (error) {
       toast(error.message);
     } finally {

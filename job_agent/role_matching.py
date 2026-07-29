@@ -209,6 +209,48 @@ ROLE_FAMILIES: dict[str, RoleFamily] = {
     ),
 }
 
+INTERNSHIP_FAMILY_ANCHORS = {
+    "product": (
+        "product manager",
+        "product management",
+        "product operations",
+        "product owner",
+    ),
+    "project_program": (
+        "project manager",
+        "project management",
+        "project coordinator",
+        "program manager",
+        "program management",
+        "program coordinator",
+        "programme manager",
+        "programme coordinator",
+        "pmo",
+        "delivery",
+        "implementation",
+    ),
+    "agile_delivery": ("agile delivery", "agile analyst", "scrum"),
+    "consulting": ("consulting", "consultant", "advisory", "business analyst"),
+    "change_transformation": (
+        "change management",
+        "change analyst",
+        "transformation analyst",
+        "organizational change",
+        "organisational change",
+        "adoption",
+    ),
+    "strategy_operations": (
+        "strategy intern",
+        "strategy analyst",
+        "strategy operations",
+        "operations analyst",
+        "business operations",
+        "management trainee",
+        "rotational program",
+        "rotational programme",
+    ),
+}
+
 EARLY_TITLE_SIGNALS = (
     "graduate",
     "new grad",
@@ -430,10 +472,33 @@ def evaluate_graduate_role(
     early_signals = [
         signal for signal in EARLY_TITLE_SIGNALS if contains_phrase(title, signal)
     ]
+    if include_internships:
+        early_signals.extend(
+            term
+            for term in INTERNSHIP_TERMS
+            if contains_phrase(title, term) and term not in early_signals
+        )
+    internship_signal = any(
+        contains_phrase(title, term) for term in INTERNSHIP_TERMS
+    )
     if not matched_keys and early_signals:
         for key in selected:
             family = ROLE_FAMILIES[key]
-            if any(contains_phrase(title, anchor) for anchor in family.anchors):
+            anchors = (
+                INTERNSHIP_FAMILY_ANCHORS.get(key, ())
+                if internship_signal
+                else family.anchors
+            )
+            if (
+                internship_signal
+                and key == "strategy_operations"
+                and any(
+                    contains_phrase(title, term)
+                    for term in ("developer", "engineer", "scientist", "quantitative")
+                )
+            ):
+                continue
+            if any(contains_phrase(title, anchor) for anchor in anchors):
                 matched_keys.append(key)
 
     if not matched_keys and not custom_aliases:

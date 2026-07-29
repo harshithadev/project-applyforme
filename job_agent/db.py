@@ -719,8 +719,18 @@ def init_db() -> None:
             "max_jobs_per_source": "80",
             "target_companies": "",
             "target_company_mode": "prefer",
-            "discovery_providers": "jobicy,remotive,weworkremotely,arbeitnow",
+            "discovery_providers": (
+                "jobicy,remotive,weworkremotely,arbeitnow,himalayas"
+            ),
             "career_urls": "",
+            "github_job_board_urls": (
+                "https://raw.githubusercontent.com/SimplifyJobs/"
+                "Summer2026-Internships/dev/README.md\n"
+                "https://raw.githubusercontent.com/SimplifyJobs/"
+                "New-Grad-Positions/dev/README.md\n"
+                "https://raw.githubusercontent.com/vanshb03/"
+                "Summer2027-Internships/dev/README.md"
+            ),
             "wellfound_search_urls": (
                 "https://wellfound.com/role/r/product-manager\n"
                 "https://wellfound.com/role/r/project-manager\n"

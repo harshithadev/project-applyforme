@@ -244,6 +244,7 @@ def main() -> None:
 
         init_db()
         set_setting("discovery_providers", "")
+        set_setting("github_job_board_urls", "")
 
         service_paths = service.service_paths(project_root=REPO_ROOT)
         service_definition = service.launch_agent_definition(service_paths)
@@ -345,6 +346,19 @@ def main() -> None:
                     "created_at": int(provider_now.timestamp()),
                 }]
             },
+            "himalayas": {
+                "jobs": [{
+                    "guid": "https://himalayas.app/companies/audit/jobs/project-coordinator",
+                    "title": "Project Coordinator",
+                    "companyName": "Himalayas Audit",
+                    "applicationLink": (
+                        "https://himalayas.app/companies/audit/jobs/project-coordinator"
+                    ),
+                    "description": "Coordinate delivery.",
+                    "locationRestrictions": ["Worldwide"],
+                    "pubDate": int(provider_now.timestamp()),
+                }]
+            },
         }
         provider_feed = f"""<rss version="2.0"><channel><item>
         <title>WWR Audit: Project Coordinator</title>
@@ -363,6 +377,8 @@ def main() -> None:
                 return provider_payloads["remotive"]
             if url == broad_sources.PROVIDERS["arbeitnow"].source_url:
                 return provider_payloads["arbeitnow"]
+            if url.startswith(broad_sources.PROVIDERS["himalayas"].source_url):
+                return provider_payloads["himalayas"]
             raise AssertionError(f"Unexpected provider URL: {url}")
 
         def fake_provider_url(url: str) -> str:
@@ -376,7 +392,7 @@ def main() -> None:
             set_setting("career_urls", "")
             set_setting(
                 "discovery_providers",
-                "jobicy,remotive,weworkremotely,arbeitnow",
+                "jobicy,remotive,weworkremotely,arbeitnow,himalayas",
             )
             set_setting("career_stage_mode", "open")
             set_setting("role_keywords", "project coordinator")
@@ -395,14 +411,14 @@ def main() -> None:
             if state["source_kind"] in broad_sources.PROVIDERS
         }
         provider_ok = (
-            provider_scan["inserted"] == 4
+            provider_scan["inserted"] == 5
             and provider_scan["errors"] == 0
             and provider_states == set(broad_sources.PROVIDERS)
         )
         record(
             "PASS" if provider_ok else "FAIL",
             "Broad job discovery providers",
-            "Scan jobs normalizes Jobicy, Remotive, We Work Remotely, and Arbeitnow with persistent source state."
+            "Scan jobs normalizes Jobicy, Remotive, We Work Remotely, Arbeitnow, and Himalayas with persistent source state."
             if provider_ok
             else f"Scan={provider_scan}, states={sorted(provider_states)}",
         )

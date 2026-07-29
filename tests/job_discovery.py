@@ -116,11 +116,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["APPLYFORME_ROOT"] = tmp
 
-        from job_agent import broad_sources, job_sources, jobs
+        from job_agent import broad_sources, github_boards, job_sources, jobs
         from job_agent.db import init_db, rows, set_setting
 
         init_db()
         set_setting("discovery_providers", "")
+        set_setting("github_job_board_urls", "")
         set_setting("career_stage_mode", "open")
         set_setting("target_companies", "ExampleCo")
         set_setting("target_company_mode", "only")
@@ -137,17 +138,31 @@ def main() -> None:
             "inserted": 1,
             "seen": 0,
             "filtered": 4,
+            "checked": 5,
             "errors": 0,
             "sources": 1,
             "skipped": 0,
+            "rejections": {
+                "role family mismatch": 1,
+                "outside posting window": 1,
+                "location mismatch": 1,
+                "company mismatch": 1,
+            },
         }, first
         assert second == {
             "inserted": 0,
             "seen": 1,
             "filtered": 4,
+            "checked": 5,
             "errors": 0,
             "sources": 1,
             "skipped": 0,
+            "rejections": {
+                "role family mismatch": 1,
+                "outside posting window": 1,
+                "location mismatch": 1,
+                "company mismatch": 1,
+            },
         }, second
         generic_jobs = rows("SELECT * FROM jobs WHERE source = 'career-detail'")
         assert len(generic_jobs) == 1
@@ -273,6 +288,23 @@ def main() -> None:
                 }
             ]
         }
+        himalayas_payload = {
+            "jobs": [
+                {
+                    "guid": "https://himalayas.app/companies/example/jobs/product-manager",
+                    "title": "Product Manager",
+                    "companyName": "Himalayas Example",
+                    "applicationLink": (
+                        "https://himalayas.app/companies/example/jobs/product-manager"
+                    ),
+                    "description": "<p>Guide product strategy and delivery.</p>",
+                    "locationRestrictions": ["Worldwide"],
+                    "employmentType": "Full Time",
+                    "seniority": ["Entry-level"],
+                    "pubDate": int(now.timestamp()),
+                }
+            ]
+        }
         wwr_feed = f"""<?xml version="1.0" encoding="UTF-8"?>
         <rss version="2.0"><channel><item>
           <title>WWR Example: Operations Manager</title>
@@ -287,6 +319,9 @@ def main() -> None:
         assert broad_sources.parse_remotive_payload(remotive_payload)[0].source == "remotive"
         assert broad_sources.parse_arbeitnow_payload(arbeitnow_payload)[0].company == "Arbeitnow Example"
         assert broad_sources.parse_weworkremotely_feed(wwr_feed)[0].company == "WWR Example"
+        himalayas = broad_sources.parse_himalayas_payload(himalayas_payload)[0]
+        assert himalayas.company == "Himalayas Example"
+        assert himalayas.location == "Worldwide"
 
         old_broad_fetch_json = broad_sources.fetch_json
         old_broad_fetch_url = broad_sources.fetch_url
@@ -298,6 +333,8 @@ def main() -> None:
                 return remotive_payload
             if url == broad_sources.PROVIDERS["arbeitnow"].source_url:
                 return arbeitnow_payload
+            if url.startswith(broad_sources.PROVIDERS["himalayas"].source_url):
+                return himalayas_payload
             raise AssertionError(f"Unexpected broad provider URL: {url}")
 
         def fake_broad_fetch_url(url: str) -> str:
@@ -311,7 +348,7 @@ def main() -> None:
             set_setting("career_urls", "")
             set_setting(
                 "discovery_providers",
-                "jobicy,remotive,weworkremotely,arbeitnow",
+                "jobicy,remotive,weworkremotely,arbeitnow,himalayas",
             )
             set_setting("target_companies", "PreferredCo")
             set_setting("target_company_mode", "prefer")
@@ -331,28 +368,34 @@ def main() -> None:
             set_setting("target_company_mode", "only")
 
         assert broad_first == {
-            "inserted": 4,
+            "inserted": 5,
             "seen": 0,
             "filtered": 0,
+            "checked": 5,
             "errors": 0,
-            "sources": 4,
+            "sources": 5,
             "skipped": 0,
+            "rejections": {},
         }, broad_first
         assert broad_second == {
             "inserted": 0,
             "seen": 0,
             "filtered": 0,
+            "checked": 0,
             "errors": 0,
-            "sources": 4,
-            "skipped": 4,
+            "sources": 5,
+            "skipped": 5,
+            "rejections": {},
         }, broad_second
         assert broad_forced == {
             "inserted": 0,
-            "seen": 4,
+            "seen": 5,
             "filtered": 0,
+            "checked": 5,
             "errors": 0,
-            "sources": 4,
+            "sources": 5,
             "skipped": 0,
+            "rejections": {},
         }, broad_forced
         broad_states = {
             state["source_kind"]: state
@@ -362,6 +405,56 @@ def main() -> None:
         assert set(broad_states) == set(broad_sources.PROVIDERS)
         assert all(state["scan_count"] == 2 for state in broad_states.values())
         assert all(state["metadata"]["attribution_url"] for state in broad_states.values())
+
+        github_fixture = """
+        <table><thead><tr><th>Company</th><th>Role</th><th>Location</th>
+        <th>Application</th><th>Age</th></tr></thead><tbody>
+        <tr><td>Board Example</td><td>Product Manager Intern</td><td>New York, NY</td>
+        <td><a href="https://example.test/jobs/product-intern">Apply</a></td><td>0d</td></tr>
+        <tr><td>↳</td><td>Business Analyst Intern 🛂</td><td>New York, NY</td>
+        <td><a href="https://example.test/jobs/analyst-intern">Apply</a></td><td>1d</td></tr>
+        </tbody></table>
+        """
+        github_postings = github_boards.parse_github_board(
+            github_fixture,
+            "https://raw.githubusercontent.com/example/jobs/main/README.md",
+            today=now.date(),
+        )
+        assert len(github_postings) == 2
+        assert github_postings[0].metadata["posted_at_precision"] == "date"
+        assert github_postings[1].company == "Board Example"
+        assert "No future sponsorship" in github_postings[1].description
+
+        old_github_fetch_url = github_boards.fetch_url
+        try:
+            github_boards.fetch_url = lambda _url: github_fixture
+            set_setting("github_job_board_urls", (
+                "https://raw.githubusercontent.com/example/jobs/main/README.md"
+            ))
+            set_setting("career_stage_mode", "graduate")
+            set_setting("target_role_families", "product,consulting")
+            set_setting("graduate_include_internships", "true")
+            set_setting("work_authorization_mode", "cpt_opt_future_sponsorship")
+            set_setting("sponsorship_unknown_handling", "review")
+            set_setting("target_company_mode", "prefer")
+            set_setting("locations", "United States")
+            set_setting("posted_age_mode", "days")
+            set_setting("posted_within_days", "3")
+            github_scan = jobs.discover_jobs()
+        finally:
+            github_boards.fetch_url = old_github_fetch_url
+            set_setting("github_job_board_urls", "")
+            set_setting("career_stage_mode", "open")
+        assert github_scan == {
+            "inserted": 1,
+            "seen": 0,
+            "filtered": 1,
+            "checked": 2,
+            "errors": 0,
+            "sources": 1,
+            "skipped": 0,
+            "rejections": {"sponsorship incompatible or unstated": 1},
+        }, github_scan
 
         age_filter_base = {
             "role_keywords": "Python",
@@ -714,17 +807,21 @@ def main() -> None:
             "inserted": 9,
             "seen": 0,
             "filtered": 0,
+            "checked": 9,
             "errors": 0,
             "sources": 3,
             "skipped": 0,
+            "rejections": {},
         }, native_first
         assert native_second == {
             "inserted": 6,
             "seen": 0,
             "filtered": 0,
+            "checked": 6,
             "errors": 0,
             "sources": 3,
             "skipped": 0,
+            "rejections": {},
         }, native_second
         assert set(first_states) == {"ashby", "smartrecruiters", "workday"}
         assert all(state["cursor"] == "3" for state in first_states.values()), first_states

@@ -10,7 +10,7 @@ Local-first job application automation scaffold for a Codex-operated workflow.
 - Secure website uploads, automatic folder reconciliation, duplicate detection, and local scanned-PDF OCR.
 - Document review, classification, extraction confidence, archive, restore, and removal controls.
 - A source-grounded structured candidate profile with contact, skills, education, certifications, and evidence.
-- Default broad discovery through Jobicy, Remotive, We Work Remotely, and Arbeitnow, plus manual job entry and enriched company career-page scanning.
+- Default broad discovery through Jobicy, Remotive, We Work Remotely, Arbeitnow, and Himalayas, plus public GitHub job boards, manual job entry, and enriched company career-page scanning.
 - Persistent per-source cursors, pagination status, scan counts, and errors in the dashboard.
 - Graduate and early-career management matching across product, project/program, agile delivery, consulting, change/transformation, and strategy/operations roles.
 - Role, company, location, and toggleable hour/calendar-day posting-age filters with canonical URL and ATS-ID deduplication.
@@ -167,23 +167,25 @@ npm run test:documents
 
 ## Job sources
 
-**Scan jobs** searches the enabled broad providers first: Jobicy, Remotive, We Work Remotely, and Arbeitnow. They are enabled by default under **Settings > Automatic discovery providers** and do not need API credentials. Results retain the provider posting URL and attribution. Persistent provider state prevents repeated requests inside each source's published polling interval.
+**Scan jobs** searches the enabled broad providers first: Jobicy, Remotive, We Work Remotely, Arbeitnow, and Himalayas. They are enabled by default under **Settings > Automatic discovery providers** and do not need API credentials. Himalayas searches each selected management family in the United States and retains source attribution. Persistent provider state prevents repeated scheduled requests inside each source's polling interval, while an explicit **Scan now** refreshes every enabled source.
+
+Three public GitHub boards are also enabled by default: Simplify Summer Internships, Simplify New Grad, and Summer 2027 Internships. Their tables are normalized to direct application URLs, sponsorship and citizenship markers are enforced, closed roles are ignored, and repeated-company rows are resolved. Add or remove raw public README URLs under **Settings > Public GitHub job board README URLs**.
 
 Company boards are supplemental. Add them under **Settings > Add company career source**. The source-type menu includes Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and generic company career pages. Select the platform, paste a specific company's board URL, and use **Add source**. Scans fetch complete descriptions, normalize location and posting dates where exposed, and retain matching reasons with each job.
 
 Preferred companies boost matching results by default without hiding jobs from other employers. Switch **Preferred company handling** to **Only matching companies** for a strict allowlist.
 
-Wellfound is available as an assisted, on-demand path rather than an automated bulk source. The **Jobs > Assisted Marketplace Searches** links open the configured role and location searches in the browser. Edit those links under **Settings > Wellfound assisted search URLs**. Listings are not harvested or scheduled in the background.
+Wellfound, HiringCafe, APM Career, APM Season, APM List, PMI, Mind the Product, Y Combinator, Built In, Handshake, and RippleMatch are available as assisted, on-demand paths rather than automated bulk sources. The **Jobs > Assisted Marketplace Searches** links open those sites in the browser. Edit the Wellfound links under **Settings > Wellfound assisted search URLs**. Account-gated or scrape-restricted listings are not harvested or scheduled in the background.
 
 **Graduate / Early Career** is the default career target. Select any combination of Product management, Project and program, Agile delivery, Consulting, Change and transformation, and Strategy and operations. The matcher recognizes conservative early-career title variants, graduate programmes, and user-supplied title aliases. Management terms in a description affect scoring but cannot make an unrelated job title eligible.
 
-The required-experience ceiling defaults to three years. Explicit requirements above the ceiling are rejected, while experience described only as preferred does not reject the role. Raise the ceiling in Settings to include roles requiring more than three years. Senior title terms and internships are excluded by default and can also be adjusted there. **Open keyword search** retains the broader role-keyword matcher for searches outside this graduate policy.
+The required-experience ceiling defaults to three years. Explicit requirements above the ceiling are rejected, while experience described only as preferred does not reject the role. Raise the ceiling in Settings to include roles requiring more than three years. Senior title terms are excluded by default; management internships and placements are included and can be toggled in Settings. **Open keyword search** retains the broader role-keyword matcher for searches outside this graduate policy.
 
 Ashby, SmartRecruiters, and Workday scans paginate up to **Max jobs per source** per run. The next offset is stored in SQLite and resumed on the next scan; the **Source scans** panel shows progress, errors, and when a full cycle completes.
 
-Location preferences are optional. Leave **Locations** empty to accept jobs from any location; adding values turns them into an allowlist for postings that expose a location.
+The current default location is the United States. Clear **Locations** to accept jobs from any location; adding values turns them into an allowlist for postings that expose a location.
 
-The posting-age filter can run in **Hours** or **Calendar days** mode. Hours mode applies an exact elapsed-time cutoff and therefore requires a source timestamp. Calendar days mode uses local calendar dates and includes sources that publish only a date without a time. **Include jobs without a posting date** separately controls postings whose source supplies no date at all.
+The posting-age filter can run in **Hours** or **Calendar days** mode. Hours mode applies an exact elapsed-time cutoff and therefore requires a source timestamp. Public GitHub boards normally expose only a date or relative day age, so use Calendar days to include them. **Include jobs without a posting date** separately controls postings whose source supplies no date at all. Every manual scan reports how many postings were checked and groups filtered results by reason.
 
 Run the discovery, posting-age, and graduate management matcher tests with:
 

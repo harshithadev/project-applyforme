@@ -7,6 +7,7 @@ import re
 import urllib.error
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 from .broad_sources import discover_provider, provider_for, provider_keys
 from .db import all_settings, connect, log, now_iso, row, rows
@@ -15,6 +16,7 @@ from .eligibility import (
     targets_united_states,
     us_location_matches,
 )
+from .github_boards import discover_github_board
 from .job_sources import (
     JobPosting,
     SourceResult,
@@ -517,16 +519,19 @@ def _process_source_result(
     source_url: str,
     source_result: SourceResult,
     settings: dict[str, str],
-    result: dict[str, int],
+    result: dict[str, Any],
 ) -> None:
     result["errors"] += len(source_result.errors)
     for message in source_result.errors:
         log(message, "error")
     for posting in source_result.postings:
+        result["checked"] += 1
         decision = evaluate_posting(posting, settings)
         if not decision.accepted:
             _mark_filtered_posting(posting, decision)
             result["filtered"] += 1
+            bucket = _rejection_bucket(decision.rejection)
+            result["rejections"][bucket] = result["rejections"].get(bucket, 0) + 1
             continue
         if _persist_posting(posting, decision):
             result["inserted"] += 1
@@ -543,10 +548,36 @@ def _process_source_result(
     )
 
 
-def discover_jobs(*, force: bool = False) -> dict[str, int]:
+def _rejection_bucket(reason: str) -> str:
+    normalized = reason.casefold()
+    if normalized.startswith("posting is "):
+        return "outside posting window"
+    if "date but no exact time" in normalized:
+        return "date-only posting in hourly mode"
+    if "posting date is not listed" in normalized:
+        return "posting date missing"
+    if "graduate management role family" in normalized or "role keywords" in normalized:
+        return "role family mismatch"
+    if "location did not match" in normalized:
+        return "location mismatch"
+    if "sponsorship" in normalized:
+        return "sponsorship incompatible or unstated"
+    if "target list" in normalized:
+        return "company mismatch"
+    if "years of experience" in normalized:
+        return "experience requirement above limit"
+    if "excluded seniority" in normalized:
+        return "seniority excluded"
+    if "internships are excluded" in normalized:
+        return "internships excluded"
+    return reason or "other filter"
+
+
+def discover_jobs(*, force: bool = False) -> dict[str, Any]:
     settings = all_settings()
     refresh_saved_job_matches(settings)
     urls = split_csv(settings.get("career_urls", ""))
+    github_board_urls = split_csv(settings.get("github_job_board_urls", ""))
     providers = _configured_provider_keys(settings)
     companies = split_csv(settings.get("target_companies", ""))
     keywords = split_csv(settings.get("role_keywords", ""))
@@ -558,12 +589,17 @@ def discover_jobs(*, force: bool = False) -> dict[str, int]:
         "inserted": 0,
         "seen": 0,
         "filtered": 0,
+        "checked": 0,
         "errors": 0,
-        "sources": len(providers) + len(urls),
+        "sources": len(providers) + len(urls) + len(github_board_urls),
         "skipped": 0,
+        "rejections": {},
     }
-    if not providers and not urls:
-        log("No discovery providers or company career URLs are enabled.", "warning")
+    if not providers and not urls and not github_board_urls:
+        log(
+            "No discovery providers, GitHub boards, or company career URLs are enabled.",
+            "warning",
+        )
         return result
 
     for key in providers:
@@ -579,7 +615,7 @@ def discover_jobs(*, force: bool = False) -> dict[str, int]:
         state = _begin_source_scan(provider.source_url, provider.key)
         source_url = str(state["source_url"])
         try:
-            source_result = discover_provider(key, limit)
+            source_result = discover_provider(key, limit, settings)
         except Exception as exc:
             _fail_source_scan(source_url, exc)
             result["errors"] += 1
@@ -588,6 +624,24 @@ def discover_jobs(*, force: bool = False) -> dict[str, int]:
                 "error",
                 {"error": str(exc)},
             )
+            continue
+        _process_source_result(source_url, source_result, settings, result)
+
+    for url in github_board_urls:
+        state = _begin_source_scan(url, "github-board")
+        source_url = str(state["source_url"])
+        try:
+            source_result = discover_github_board(url, limit)
+        except (
+            OSError,
+            urllib.error.URLError,
+            TimeoutError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as exc:
+            _fail_source_scan(source_url, exc)
+            result["errors"] += 1
+            log(f"Could not scan GitHub board {url}.", "error", {"error": str(exc)})
             continue
         _process_source_result(source_url, source_result, settings, result)
 
@@ -610,9 +664,11 @@ def discover_jobs(*, force: bool = False) -> dict[str, int]:
         _process_source_result(source_url, source_result, settings, result)
     log(
         "Job discovery complete: "
-        f"{result['inserted']} new, {result['seen']} refreshed, "
+        f"{result['checked']} checked, {result['inserted']} new, "
+        f"{result['seen']} refreshed, "
         f"{result['filtered']} filtered, {result['errors']} error(s), "
-        f"{result['skipped']} rate-limited source(s)."
+        f"{result['skipped']} rate-limited source(s).",
+        meta=result,
     )
     return result
 

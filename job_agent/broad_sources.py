@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
+from urllib.error import URLError
 from urllib.parse import urlencode, urlsplit
 
 from .job_sources import (
@@ -54,6 +56,13 @@ PROVIDERS = {
         source_url="https://www.arbeitnow.com/api/job-board-api",
         attribution_url="https://www.arbeitnow.com/",
         minimum_interval_minutes=60,
+    ),
+    "himalayas": DiscoveryProvider(
+        key="himalayas",
+        label="Himalayas",
+        source_url="https://himalayas.app/jobs/api/search",
+        attribution_url="https://himalayas.app/jobs",
+        minimum_interval_minutes=1440,
     ),
 }
 
@@ -250,9 +259,133 @@ def parse_weworkremotely_feed(body: str) -> list[JobPosting]:
     return postings
 
 
-def discover_provider(key: str, limit: int) -> SourceResult:
+def _himalayas_location(item: dict[str, object]) -> str:
+    raw_locations = item.get("locationRestrictions") or []
+    locations: list[str] = []
+    for raw in raw_locations if isinstance(raw_locations, list) else []:
+        if isinstance(raw, dict):
+            value = clean_text(raw.get("name") or raw.get("slug") or raw.get("alpha2"))
+        else:
+            value = clean_text(raw)
+        if value and value not in locations:
+            locations.append(value)
+    return ", ".join(locations) or "Worldwide"
+
+
+def parse_himalayas_payload(payload: object) -> list[JobPosting]:
+    items = payload.get("jobs", []) if isinstance(payload, dict) else []
+    postings: list[JobPosting] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        title = clean_text(item.get("title"))
+        url = canonicalize_url(
+            str(item.get("applicationLink") or item.get("guid") or "")
+        )
+        if not title or not url:
+            continue
+        posted_at, precision = posting_timestamp(item.get("pubDate"))
+        postings.append(
+            JobPosting(
+                title=title,
+                company=clean_text(item.get("companyName")),
+                url=url,
+                description=html_to_text(
+                    item.get("description") or item.get("excerpt") or ""
+                ),
+                location=_himalayas_location(item),
+                source="himalayas",
+                posted_at=posted_at,
+                external_id=clean_text(item.get("guid")) or _external_id(item, url),
+                apply_url=url,
+                workplace_type="remote",
+                metadata={
+                    "employment_type": item.get("employmentType") or "",
+                    "seniority": item.get("seniority") or [],
+                    "categories": item.get("categories") or [],
+                    "salary": item.get("salary") or "",
+                    "posted_at_precision": precision,
+                    "attribution_url": PROVIDERS["himalayas"].attribution_url,
+                },
+            )
+        )
+    return postings
+
+
+def _himalayas_queries(settings: dict[str, str]) -> list[str]:
+    query_by_family = {
+        "product": "product manager",
+        "project_program": "project program manager",
+        "agile_delivery": "agile scrum",
+        "consulting": "consultant",
+        "change_transformation": "change transformation",
+        "strategy_operations": "strategy operations",
+    }
+    selected = [
+        part.strip()
+        for part in str(settings.get("target_role_families") or "").split(",")
+        if part.strip()
+    ]
+    queries = [
+        query_by_family[key]
+        for key in selected
+        if key in query_by_family
+    ]
+    return queries or ["product project program consultant strategy operations"]
+
+
+def _discover_himalayas(
+    provider: DiscoveryProvider,
+    selected_limit: int,
+    settings: dict[str, str],
+) -> SourceResult:
+    postings: list[JobPosting] = []
+    seen_urls: set[str] = set()
+    queries = _himalayas_queries(settings)
+    errors: list[str] = []
+    for query in queries:
+        query_url = f"{provider.source_url}?{urlencode({
+            'q': query,
+            'country': 'US',
+            'sort': 'recent',
+            'page': 1,
+        })}"
+        try:
+            payload = fetch_json(query_url)
+        except (OSError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"Himalayas query failed for {query}: {exc}")
+            continue
+        for posting in parse_himalayas_payload(payload):
+            if posting.url in seen_urls:
+                continue
+            seen_urls.add(posting.url)
+            postings.append(posting)
+    postings.sort(key=lambda posting: posting.posted_at, reverse=True)
+    return SourceResult(
+        postings=postings[:selected_limit],
+        errors=errors,
+        complete=not errors,
+        pages_scanned=len(queries),
+        metadata={
+            "provider": provider.key,
+            "provider_label": provider.label,
+            "total": len(postings),
+            "queries": queries,
+            "attribution_url": provider.attribution_url,
+            "minimum_interval_minutes": provider.minimum_interval_minutes,
+        },
+    )
+
+
+def discover_provider(
+    key: str,
+    limit: int,
+    settings: dict[str, str] | None = None,
+) -> SourceResult:
     provider = provider_for(key)
     selected_limit = min(100, max(1, limit))
+    if key == "himalayas":
+        return _discover_himalayas(provider, selected_limit, settings or {})
     if key == "jobicy":
         payload = fetch_json(
             f"{provider.source_url}?{urlencode({'count': selected_limit})}"

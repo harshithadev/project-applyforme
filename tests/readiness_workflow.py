@@ -85,7 +85,8 @@ def main() -> None:
             item for item in initial["checks"] if item["id"] == "discovery"
         )
         assert discovery["status"] == "pass"
-        assert discovery["detail"]["discovery_providers"] == 4
+        assert discovery["detail"]["discovery_providers"] == 5
+        assert discovery["detail"]["github_boards"] == 3
         graduate_targeting = next(
             item for item in initial["checks"] if item["id"] == "targeting"
         )
@@ -93,7 +94,7 @@ def main() -> None:
         assert graduate_targeting["view"] == "settings"
         assert graduate_targeting["detail"]["career_stage_mode"] == "graduate"
         assert graduate_targeting["detail"]["role_families"] == 6
-        assert graduate_targeting["detail"]["locations"] == 0
+        assert graduate_targeting["detail"]["locations"] == 1
         assert "management role family" in graduate_targeting["message"]
         assert not next(
             item for item in initial["modes"] if item["id"] == "review_automation"

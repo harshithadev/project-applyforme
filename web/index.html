@@ -94,6 +94,7 @@
               </div>
             </div>
             <div id="workflowScanMessage" class="workflow-scan-message" aria-live="polite"></div>
+            <div id="workflowRejectionSummary" class="workflow-rejection-summary"></div>
             <div id="workflowSourceProgress" class="workflow-source-progress"></div>
           </section>
 
@@ -718,6 +719,10 @@
                     <input name="discovery_providers" type="checkbox" value="arbeitnow" />
                     <span>Arbeitnow</span>
                   </label>
+                  <label>
+                    <input name="discovery_providers" type="checkbox" value="himalayas" />
+                    <span>Himalayas</span>
+                  </label>
                 </div>
               </fieldset>
               <label>Contact discovery pages
@@ -754,6 +759,9 @@
               </fieldset>
               <label class="wide-setting">Additional company career URLs
                 <textarea name="career_urls"></textarea>
+              </label>
+              <label class="wide-setting">Public GitHub job board README URLs
+                <textarea name="github_job_board_urls"></textarea>
               </label>
               <label class="wide-setting">Wellfound assisted search URLs
                 <textarea name="wellfound_search_urls"></textarea>

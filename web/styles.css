@@ -338,6 +338,22 @@ main {
   font-size: 12px;
 }
 
+.workflow-rejection-summary {
+  display: flex;
+  min-height: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workflow-rejection-summary span {
+  padding: 4px 7px;
+  border: 1px solid #e5c7a9;
+  border-radius: 4px;
+  background: #fff8ef;
+  color: #7a4214;
+  font-size: 11px;
+}
+
 .workflow-source-progress {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr));
