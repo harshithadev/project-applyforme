@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 
 from .broad_sources import discover_provider, provider_for, provider_keys
 from .db import all_settings, connect, log, now_iso, row, rows
+from .eligibility import (
+    classify_work_authorization,
+    targets_united_states,
+    us_location_matches,
+)
 from .job_sources import (
     JobPosting,
     SourceResult,
@@ -105,9 +110,37 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
         return MatchDecision(False, 0, [], "company is outside the target list")
 
     location_blob = _normalized(f"{posting.location} {posting.workplace_type}")
-    location_hits = [location for location, term in location_terms if term in location_blob]
+    us_scope = targets_united_states(location_terms)
+    location_hits = (
+        ["United States"]
+        if us_scope and us_location_matches(posting.location, posting.workplace_type)
+        else [
+            location
+            for location, term in location_terms
+            if f" {term} " in f" {location_blob} "
+        ]
+    )
     if location_terms and location_blob and not location_hits:
         return MatchDecision(False, 0, [], "location did not match")
+
+    authorization = classify_work_authorization(posting.description)
+    authorization_mode = str(
+        settings.get("work_authorization_mode", "open") or "open"
+    ).casefold()
+    authorization_reason = ""
+    if authorization_mode == "cpt_opt_future_sponsorship":
+        if authorization.status == "incompatible":
+            return MatchDecision(False, 0, [], "posting excludes future sponsorship")
+        unknown_handling = str(
+            settings.get("sponsorship_unknown_handling", "review") or "review"
+        ).casefold()
+        if authorization.status == "unknown" and unknown_handling == "reject":
+            return MatchDecision(False, 0, [], "sponsorship is not stated")
+        authorization_reason = (
+            f"Work authorization: {authorization.label}"
+            if authorization.status != "unknown"
+            else "Work authorization: sponsorship needs verification"
+        )
 
     age_mode = str(settings.get("posted_age_mode", "days") or "days").casefold()
     if age_mode not in {"hours", "days"}:
@@ -172,6 +205,8 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
     score += 10 if location_hits else 6 if not location_terms else 4 if not location_blob else 0
     score += 5 if company_terms and company_match else 3 if not company_terms else 0
     score += 5 if age_value is not None else 2
+    if authorization.status in {"confirmed", "cpt_opt"}:
+        score += 5
     reasons = []
     if graduate_role:
         reasons.extend(graduate_role.reasons)
@@ -187,6 +222,8 @@ def evaluate_posting(posting: JobPosting, settings: dict[str, str]) -> MatchDeci
         reasons.append(age_reason)
     else:
         reasons.append("Posting date not listed")
+    if authorization_reason:
+        reasons.append(authorization_reason)
     return MatchDecision(True, min(100, score), reasons)
 
 
@@ -241,6 +278,7 @@ def _persist_posting(posting: JobPosting, decision: MatchDecision) -> bool:
                 SET title = ?, company = ?, url = ?, description = ?, location = ?, source = ?,
                     score = ?, posted_at = ?, external_id = ?, source_key = ?, fingerprint = ?,
                     apply_url = ?, workplace_type = ?, match_reasons = ?, metadata = ?,
+                    status = CASE WHEN status = 'filtered' THEN 'new' ELSE status END,
                     last_seen_at = ?, description_fetched_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
@@ -260,6 +298,32 @@ def _persist_posting(posting: JobPosting, decision: MatchDecision) -> bool:
             values[:15] + (now, now, now, now),
         )
     return True
+
+
+def _mark_filtered_posting(posting: JobPosting, decision: MatchDecision) -> None:
+    url = canonicalize_url(posting.url)
+    source_key = _source_key(posting)
+    now = now_iso()
+    reason = f"Filtered: {decision.rejection or 'posting is outside current preferences'}"
+    with connect() as conn:
+        if source_key:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'filtered', match_reasons = ?, last_seen_at = ?, updated_at = ?
+                WHERE (url = ? OR source_key = ?) AND status IN ('new', 'maybe')
+                """,
+                (json.dumps([reason]), now, now, url, source_key),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'filtered', match_reasons = ?, last_seen_at = ?, updated_at = ?
+                WHERE url = ? AND status IN ('new', 'maybe')
+                """,
+                (json.dumps([reason]), now, now, url),
+            )
 
 
 def _begin_source_scan(url: str, source_kind_override: str = "") -> dict[str, object]:
@@ -360,6 +424,82 @@ def _configured_provider_keys(settings: dict[str, str]) -> list[str]:
     return configured
 
 
+def refresh_saved_job_matches(
+    settings: dict[str, str] | None = None,
+) -> dict[str, int]:
+    active_settings = settings or all_settings()
+    result = {"checked": 0, "accepted": 0, "filtered": 0, "changed": 0}
+    candidates = rows(
+        """
+        SELECT * FROM jobs
+        WHERE status IN ('new', 'maybe', 'filtered')
+        ORDER BY id
+        """
+    )
+    for candidate in candidates:
+        try:
+            metadata = json.loads(str(candidate.get("metadata") or "{}"))
+        except json.JSONDecodeError:
+            metadata = {}
+        posting = JobPosting(
+            title=str(candidate.get("title") or ""),
+            company=str(candidate.get("company") or ""),
+            url=str(candidate.get("url") or ""),
+            description=str(candidate.get("description") or ""),
+            location=str(candidate.get("location") or ""),
+            source=str(candidate.get("source") or ""),
+            posted_at=str(candidate.get("posted_at") or ""),
+            external_id=str(candidate.get("external_id") or ""),
+            apply_url=str(candidate.get("apply_url") or ""),
+            workplace_type=str(candidate.get("workplace_type") or ""),
+            metadata=metadata if isinstance(metadata, dict) else {},
+        )
+        decision = evaluate_posting(posting, active_settings)
+        current_status = str(candidate.get("status") or "new")
+        next_status = (
+            current_status
+            if decision.accepted and current_status in {"new", "maybe"}
+            else "new"
+            if decision.accepted
+            else "filtered"
+        )
+        reasons = (
+            decision.reasons
+            if decision.accepted
+            else [f"Filtered: {decision.rejection or 'posting is outside current preferences'}"]
+        )
+        if (
+            next_status != current_status
+            or int(candidate.get("score") or 0) != decision.score
+            or str(candidate.get("match_reasons") or "") != json.dumps(reasons)
+        ):
+            result["changed"] += 1
+        with connect() as conn:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, score = ?, match_reasons = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    next_status,
+                    decision.score,
+                    json.dumps(reasons),
+                    now_iso(),
+                    int(candidate["id"]),
+                ),
+            )
+        result["checked"] += 1
+        result["accepted" if decision.accepted else "filtered"] += 1
+    if result["changed"]:
+        log(
+            f"Rechecked {result['checked']} saved job(s): "
+            f"{result['accepted']} eligible and {result['filtered']} filtered.",
+            meta=result,
+        )
+    return result
+
+
 def _provider_cooldown_minutes(key: str) -> int:
     provider = provider_for(key)
     state = row(
@@ -385,6 +525,7 @@ def _process_source_result(
     for posting in source_result.postings:
         decision = evaluate_posting(posting, settings)
         if not decision.accepted:
+            _mark_filtered_posting(posting, decision)
             result["filtered"] += 1
             continue
         if _persist_posting(posting, decision):
@@ -404,6 +545,7 @@ def _process_source_result(
 
 def discover_jobs(*, force: bool = False) -> dict[str, int]:
     settings = all_settings()
+    refresh_saved_job_matches(settings)
     urls = split_csv(settings.get("career_urls", ""))
     providers = _configured_provider_keys(settings)
     companies = split_csv(settings.get("target_companies", ""))
@@ -509,6 +651,32 @@ def add_manual_job(payload: dict[str, object]) -> int:
     return int(found["id"])
 
 
+def decide_job(job_id: int, decision: str) -> dict[str, object]:
+    statuses = {
+        "reject": "rejected",
+        "maybe": "maybe",
+        "reconsider": "new",
+    }
+    status = statuses.get(decision.casefold())
+    if not status:
+        raise ValueError("Job decision must be reject, maybe, or reconsider")
+    job = row("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    if not job:
+        raise ValueError("Job does not exist")
+    if row("SELECT id FROM applications WHERE job_id = ? LIMIT 1", (job_id,)):
+        raise ValueError("A drafted application must be managed from the application workflow")
+    with connect() as conn:
+        conn.execute(
+            "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
+            (status, now_iso(), job_id),
+        )
+    log(
+        f"Marked {job['title']} at {job['company']} as {status}.",
+        meta={"job_id": job_id, "decision": decision},
+    )
+    return row("SELECT * FROM jobs WHERE id = ?", (job_id,)) or {}
+
+
 def list_jobs() -> list[dict[str, object]]:
     jobs = rows("SELECT * FROM jobs ORDER BY discovered_at DESC, id DESC LIMIT 200")
     for job in jobs:
@@ -520,4 +688,7 @@ def list_jobs() -> list[dict[str, object]]:
             job["metadata"] = json.loads(str(job.get("metadata") or "{}"))
         except json.JSONDecodeError:
             job["metadata"] = {}
+        job["work_authorization"] = classify_work_authorization(
+            job.get("description")
+        ).as_dict()
     return jobs

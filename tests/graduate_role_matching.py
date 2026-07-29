@@ -35,13 +35,17 @@ def main() -> None:
         title: str,
         description: str,
         overrides: dict[str, str] | None = None,
+        *,
+        location: str = "Remote",
+        workplace_type: str = "remote",
     ) -> jobs.MatchDecision:
         posting = job_sources.JobPosting(
             title=title,
             company="ExampleCo",
             url=f"https://example.test/jobs/{title.casefold().replace(' ', '-')}",
             description=description,
-            location="Remote",
+            location=location,
+            workplace_type=workplace_type,
         )
         return jobs.evaluate_posting(posting, {**settings, **(overrides or {})})
 
@@ -159,6 +163,70 @@ def main() -> None:
         },
     )
     assert open_mode.accepted, open_mode
+
+    us_role = evaluate(
+        "Associate Product Manager",
+        "OPT candidates are welcome and H-1B sponsorship is available in the future.",
+        {
+            "locations": "United States",
+            "work_authorization_mode": "cpt_opt_future_sponsorship",
+            "sponsorship_unknown_handling": "review",
+        },
+        location="New York, NY",
+        workplace_type="hybrid",
+    )
+    assert us_role.accepted, us_role
+    assert any("CPT/OPT mentioned" in reason for reason in us_role.reasons)
+
+    worldwide_remote = evaluate(
+        "Project Coordinator",
+        "Entry-level remote role. Visa sponsorship is available.",
+        {
+            "locations": "United States",
+            "work_authorization_mode": "cpt_opt_future_sponsorship",
+        },
+        location="Worldwide",
+        workplace_type="remote",
+    )
+    assert worldwide_remote.accepted, worldwide_remote
+
+    non_us_role = evaluate(
+        "Junior Consultant",
+        "Entry-level client delivery role with visa sponsorship available.",
+        {"locations": "United States"},
+        location="Munich",
+        workplace_type="onsite",
+    )
+    assert not non_us_role.accepted and "location" in non_us_role.rejection
+
+    no_sponsorship = evaluate(
+        "Consulting Analyst",
+        "Candidates must be authorized to work without requiring sponsorship now or in the future.",
+        {
+            "locations": "United States",
+            "work_authorization_mode": "cpt_opt_future_sponsorship",
+        },
+        location="Chicago, IL",
+        workplace_type="hybrid",
+    )
+    assert (
+        not no_sponsorship.accepted
+        and "excludes future sponsorship" in no_sponsorship.rejection
+    )
+
+    unknown_sponsorship = evaluate(
+        "Strategy Analyst",
+        "Entry-level market analysis and business strategy role.",
+        {
+            "locations": "United States",
+            "work_authorization_mode": "cpt_opt_future_sponsorship",
+            "sponsorship_unknown_handling": "review",
+        },
+        location="Boston, MA",
+        workplace_type="onsite",
+    )
+    assert unknown_sponsorship.accepted, unknown_sponsorship
+    assert any("needs verification" in reason for reason in unknown_sponsorship.reasons)
 
     print("graduate role matching ok")
 

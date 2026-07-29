@@ -136,6 +136,13 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json(jobs.discover_jobs(force=True))
             elif path == "/api/jobs":
                 self.json({"id": jobs.add_manual_job(payload)})
+            elif path == "/api/jobs/decision":
+                self.json(
+                    jobs.decide_job(
+                        int(payload["job_id"]),
+                        str(payload["decision"]),
+                    )
+                )
             elif path == "/api/pipeline/run":
                 self.json(orchestration.process_cycle())
             elif path == "/api/pipeline/retry":
@@ -177,7 +184,14 @@ class Handler(SimpleHTTPRequestHandler):
                 applications.mark_application_submitted(int(payload["application_id"]))
                 self.json({"ok": True})
             elif path == "/api/applications/apply":
-                self.json(automation.apply_application(int(payload["application_id"])))
+                self.json(
+                    automation.apply_application(
+                        int(payload["application_id"]),
+                        final_submit_approved=str(
+                            payload.get("final_submit_approved", False)
+                        ).casefold() in {"1", "true", "yes", "on"},
+                    )
+                )
             elif path == "/api/applications/task/resolve":
                 self.json(
                     automation.resolve_checkpoint(

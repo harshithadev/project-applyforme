@@ -156,7 +156,11 @@ def _record_task_event(
     log(message, level, {"application_task_id": task_id, "step": step, **(meta or {})})
 
 
-def apply_application(application_id: int) -> dict[str, Any]:
+def apply_application(
+    application_id: int,
+    *,
+    final_submit_approved: bool = False,
+) -> dict[str, Any]:
     app = _application_record(application_id)
     if not app:
         return {"status": "error", "message": "Application does not exist."}
@@ -197,6 +201,13 @@ def apply_application(application_id: int) -> dict[str, Any]:
         (application_id,),
     )
     if existing:
+        if final_submit_approved and not existing["final_submit_approved"]:
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE application_tasks SET final_submit_approved = 1, updated_at = ? WHERE id = ?",
+                    (now_iso(), int(existing["id"])),
+                )
+            existing["final_submit_approved"] = 1
         task = _task_dict(existing)
         task["message"] = (
             "This application already has a browser task waiting for action."
@@ -217,9 +228,9 @@ def apply_application(application_id: int) -> dict[str, Any]:
             """
             INSERT INTO application_tasks(
               application_id, browser_session_id, adapter, target_url, mode, status,
-              current_step, message, created_at, updated_at
+              current_step, message, final_submit_approved, created_at, updated_at
             )
-            VALUES(?, ?, ?, ?, ?, 'queued', 'queued', ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, 'queued', 'queued', ?, ?, ?, ?)
             """,
             (
                 application_id,
@@ -228,6 +239,7 @@ def apply_application(application_id: int) -> dict[str, Any]:
                 target_url,
                 mode,
                 "Browser application queued.",
+                1 if final_submit_approved else 0,
                 now,
                 now,
             ),

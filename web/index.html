@@ -17,22 +17,23 @@
           </div>
         </div>
         <nav>
-          <button class="nav-item active" data-view="overview">Overview</button>
+          <button class="nav-item active" data-view="overview">Workflow</button>
+          <button class="nav-item" data-view="documents">Documents</button>
+          <button class="nav-item" data-view="applications">Application history</button>
+          <button class="nav-item" data-view="outreach">Outreach</button>
+          <span class="nav-section-label">Advanced</span>
           <button class="nav-item nav-item-counted" data-view="setup">
             <span>Setup</span>
             <strong id="readinessNavBadge" class="nav-count">0%</strong>
           </button>
-          <button class="nav-item" data-view="documents">Documents</button>
-          <button class="nav-item" data-view="jobs">Jobs</button>
+          <button class="nav-item" data-view="jobs">Sources and jobs</button>
           <button class="nav-item" data-view="pipeline">Pipeline</button>
           <button class="nav-item nav-item-counted" data-view="approvals">
             <span>Approvals</span>
             <strong id="approvalNavCount" class="nav-count">0</strong>
           </button>
-          <button class="nav-item" data-view="applications">Applications</button>
-          <button class="nav-item" data-view="outreach">Outreach</button>
           <button class="nav-item" data-view="settings">Settings</button>
-          <button class="nav-item" data-view="logs">Logs</button>
+          <button class="nav-item" data-view="logs">Activity</button>
         </nav>
         <div class="system-card">
           <span class="label">Mode</span>
@@ -53,49 +54,102 @@
       <main>
         <header class="topbar">
           <div>
-            <h2 id="viewTitle">Overview</h2>
-            <p id="viewSubtitle">Track documents, jobs, applications, and agent actions.</p>
+            <h2 id="viewTitle">Workflow</h2>
+            <p id="viewSubtitle">Scan, approve, tailor, apply, and repeat.</p>
           </div>
           <div class="actions">
             <button id="refreshBtn" class="icon-btn" title="Refresh">↻</button>
-            <button id="ingestBtn">Ingest docs</button>
-            <button id="scanBtn">Scan jobs</button>
           </div>
         </header>
 
         <section id="overview" class="view active">
-          <div class="metric-grid">
-            <div class="metric"><span>Documents</span><strong id="docCount">0</strong></div>
-            <div class="metric"><span>Jobs</span><strong id="jobCount">0</strong></div>
-            <div class="metric"><span>Pipeline</span><strong id="pipelineCount">0</strong></div>
-            <div class="metric"><span>Applications</span><strong id="appCount">0</strong></div>
-            <div class="metric"><span>Outreach</span><strong id="outreachCount">0</strong></div>
-            <div class="metric"><span>Events</span><strong id="eventCount">0</strong></div>
-          </div>
-
-          <div class="panel-grid">
-            <section class="panel">
-              <div class="panel-head">
-                <h3>Source Documents</h3>
-                <span id="docsPath" class="mono"></span>
+          <section class="workflow-command">
+            <div class="workflow-command-head">
+              <div>
+                <span class="section-label">Job discovery</span>
+                <h3>Find current matches</h3>
               </div>
-              <div id="docsList" class="list"></div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <h3>Recent Activity</h3>
-              </div>
-              <div id="recentEvents" class="timeline"></div>
-            </section>
-          </div>
-
-          <section class="panel">
-            <div class="panel-head">
-              <h3>Candidate Profile</h3>
-              <span>Structured from your source documents</span>
+              <button id="scanBtn" class="scan-primary">Scan now</button>
             </div>
-            <div id="structuredProfile" class="profile-grid"></div>
+            <div class="workflow-scan-controls">
+              <label>Posting window
+                <select id="workflowAgePreset">
+                  <option value="hours:1">Last hour</option>
+                  <option value="hours:6">Last 6 hours</option>
+                  <option value="hours:24">Last 24 hours</option>
+                  <option value="days:1">Today and yesterday</option>
+                  <option value="days:3">Last 3 calendar days</option>
+                  <option value="days:7">Last 7 calendar days</option>
+                </select>
+              </label>
+              <label class="workflow-toggle">
+                <input id="workflowUnknownDates" type="checkbox" />
+                <span>Include unlisted dates</span>
+              </label>
+              <div class="workflow-scope" aria-label="Active search scope">
+                <span>United States</span>
+                <span>Internships + graduate roles</span>
+                <span>0-3 years</span>
+                <span>CPT/OPT + future sponsorship</span>
+              </div>
+            </div>
+            <div id="workflowScanMessage" class="workflow-scan-message" aria-live="polite"></div>
+            <div id="workflowSourceProgress" class="workflow-source-progress"></div>
+          </section>
+
+          <div class="workflow-steps" aria-label="Application workflow">
+            <div class="workflow-step active">
+              <span>1</span>
+              <div><strong>Review jobs</strong><small id="workflowJobCount">0 waiting</small></div>
+            </div>
+            <div class="workflow-step">
+              <span>2</span>
+              <div><strong>Review materials</strong><small id="workflowMaterialCount">0 waiting</small></div>
+            </div>
+            <div class="workflow-step">
+              <span>3</span>
+              <div><strong>Applying</strong><small id="workflowApplyingCount">0 active</small></div>
+            </div>
+            <div class="workflow-step">
+              <span>4</span>
+              <div><strong>Submitted</strong><small id="workflowSubmittedCount">0 complete</small></div>
+            </div>
+          </div>
+
+          <div class="workflow-layout">
+            <section class="panel workflow-queue-panel">
+              <div class="workflow-tabs" role="tablist" aria-label="Workflow queue">
+                <button class="active" data-workflow-tab="jobs" role="tab">Jobs <span id="workflowJobsTabCount">0</span></button>
+                <button data-workflow-tab="materials" role="tab">Materials <span id="workflowMaterialsTabCount">0</span></button>
+                <button data-workflow-tab="applying" role="tab">Applying <span id="workflowApplyingTabCount">0</span></button>
+                <button data-workflow-tab="submitted" role="tab">Submitted <span id="workflowSubmittedTabCount">0</span></button>
+              </div>
+              <div id="workflowQueueList" class="workflow-queue"></div>
+            </section>
+
+            <aside class="workflow-side">
+              <section class="panel">
+                <div class="panel-head">
+                  <h3>Needs you</h3>
+                  <span id="workflowAttentionCount">0 items</span>
+                </div>
+                <div id="workflowAttentionList" class="workflow-attention-list"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-head">
+                  <h3>Today</h3>
+                </div>
+                <div id="workflowToday" class="workflow-today"></div>
+              </section>
+            </aside>
+          </div>
+
+          <section class="panel workflow-activity">
+            <div class="panel-head">
+              <h3>Recent activity</h3>
+              <button class="secondary compact-btn" data-action="readiness-open" data-view="logs">Open activity</button>
+            </div>
+            <div id="recentEvents" class="timeline"></div>
           </section>
         </section>
 
@@ -213,7 +267,10 @@
                 <h3>Document Inbox</h3>
                 <span id="documentWatcherState">Checking folder watcher</span>
               </div>
-              <button id="documentPickerBtn" type="button">Add documents</button>
+              <div class="card-actions">
+                <button id="ingestBtn" type="button" class="secondary">Ingest folder</button>
+                <button id="documentPickerBtn" type="button">Add documents</button>
+              </div>
             </div>
             <form id="documentUploadForm">
               <input
@@ -563,6 +620,18 @@
                   <label class="checkbox-setting internship-setting">
                     <input name="graduate_include_internships" type="checkbox" value="true" />
                     <span>Include internships and placements</span>
+                  </label>
+                  <label>Work authorization
+                    <select name="work_authorization_mode">
+                      <option value="open">Do not filter</option>
+                      <option value="cpt_opt_future_sponsorship">CPT/OPT + future sponsorship</option>
+                    </select>
+                  </label>
+                  <label>Sponsorship not stated
+                    <select name="sponsorship_unknown_handling">
+                      <option value="review">Keep for verification</option>
+                      <option value="reject">Exclude</option>
+                    </select>
                   </label>
                   <fieldset class="role-family-settings">
                     <legend>Management role families</legend>

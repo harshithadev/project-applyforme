@@ -759,6 +759,60 @@ def main() -> None:
         assert all("utm_" not in job["url"] and "source=" not in job["url"] for job in native_jobs)
         assert all("Python" in job["description"] for job in native_jobs)
 
+        decision_job_id = jobs.add_manual_job(
+            {
+                "title": "Strategy Analyst",
+                "company": "Decision Example",
+                "url": "https://example.test/jobs/decision",
+                "description": "Entry-level strategy and operations role.",
+            }
+        )
+        assert jobs.decide_job(decision_job_id, "maybe")["status"] == "maybe"
+        assert jobs.decide_job(decision_job_id, "reconsider")["status"] == "new"
+        assert jobs.decide_job(decision_job_id, "reject")["status"] == "rejected"
+
+        us_job_id = jobs.add_manual_job(
+            {
+                "title": "Associate Product Manager",
+                "company": "US Scope Example",
+                "url": "https://example.test/jobs/us-scope",
+                "description": "Entry-level product role with OPT support.",
+                "location": "New York, NY",
+            }
+        )
+        foreign_job_id = jobs.add_manual_job(
+            {
+                "title": "Junior Consultant",
+                "company": "Foreign Scope Example",
+                "url": "https://example.test/jobs/foreign-scope",
+                "description": "Entry-level consulting role.",
+                "location": "Munich",
+            }
+        )
+        refreshed = jobs.refresh_saved_job_matches(
+            {
+                "career_stage_mode": "graduate",
+                "target_role_families": "product,consulting",
+                "graduate_include_internships": "true",
+                "graduate_max_required_experience_years": "3",
+                "excluded_title_terms": "",
+                "locations": "United States",
+                "work_authorization_mode": "cpt_opt_future_sponsorship",
+                "sponsorship_unknown_handling": "review",
+                "posted_within_days": "0",
+            }
+        )
+        assert refreshed["checked"] >= 2
+        scope_statuses = {
+            item["id"]: item["status"]
+            for item in rows(
+                "SELECT id, status FROM jobs WHERE id IN (?, ?)",
+                (us_job_id, foreign_job_id),
+            )
+        }
+        assert scope_statuses[us_job_id] == "new"
+        assert scope_statuses[foreign_job_id] == "filtered"
+
     print("job discovery ok")
 
 

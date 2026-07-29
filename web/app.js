@@ -1,7 +1,10 @@
 const state = {
   data: null,
   activeView: "overview",
-  workerPoll: null
+  workerPoll: null,
+  workflowTab: "jobs",
+  scanResult: null,
+  scanRunning: false
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -138,21 +141,13 @@ function render() {
   $("#emailBadge").textContent = data.email?.configured ? formatMode(data.email.mode) : "Not configured";
   $("#approvalNavCount").textContent = Number(data.approvals?.summary?.pending || 0);
   $("#readinessNavBadge").textContent = `${Number(data.readiness?.score || 0)}%`;
-  $("#docCount").textContent = data.profile.documents.length;
-  $("#jobCount").textContent = data.jobs.length;
-  $("#pipelineCount").textContent = Number(data.pipeline?.total || 0);
-  $("#appCount").textContent = data.applications.length;
-  $("#outreachCount").textContent = (data.outreach || []).length;
-  $("#eventCount").textContent = data.events.length;
-  $("#docsPath").textContent = data.paths.docs;
   $("#dbPath").textContent = data.paths.database;
   $("#jobQueueMeta").textContent = `${data.jobs.length} tracked`;
 
-  renderDocs(data.profile.documents);
   renderDocumentInbox(data.profile.documents, data.document_inbox || {});
-  renderStructuredProfile(data.profile.structured || {});
   renderEvents("#recentEvents", data.events.slice(0, 8));
   renderEvents("#logsList", data.events);
+  renderWorkflow(data);
   renderJobs(data.jobs);
   renderAssistedSearches(data.settings);
   renderSourceStates(data.job_source_states || []);
@@ -340,6 +335,201 @@ function renderEvents(selector, events) {
       <span class="meta">${escapeHtml(event.created_at)} · ${escapeHtml(event.level)}</span>
     </div>
   `).join("");
+}
+
+function latestTaskFor(applicationId, tasks) {
+  return tasks.find(
+    (task) => Number(task.application_id) === Number(applicationId)
+  );
+}
+
+function renderWorkflowJobs(target, jobs) {
+  if (!jobs.length) {
+    target.innerHTML = `<div class="empty">No jobs are waiting. Run a scan to refresh the queue.</div>`;
+    return;
+  }
+  target.innerHTML = jobs.map((job) => {
+    const authorization = job.work_authorization || {};
+    const authorizationClass = ["confirmed", "cpt_opt", "incompatible"].includes(
+      authorization.status
+    ) ? authorization.status : "unknown";
+    return `
+      <article class="workflow-job-row">
+        <div class="workflow-job-main">
+          <div class="workflow-job-heading">
+            <div>
+              <h4>${escapeHtml(job.title)}</h4>
+              <p>${escapeHtml(job.company)} · ${escapeHtml(job.location || "Location needs verification")}</p>
+            </div>
+            <strong class="workflow-score">${Number(job.score || 0)}</strong>
+          </div>
+          <div class="workflow-job-facts">
+            <span>${escapeHtml(formatJobDate(job.posted_at, job.metadata?.posted_at_precision))}</span>
+            <span>${escapeHtml(job.source)}</span>
+            <span class="authorization ${escapeHtml(authorizationClass)}">${escapeHtml(authorization.label || "Sponsorship needs verification")}</span>
+            ${job.status === "maybe" ? `<span class="status">Maybe</span>` : ""}
+          </div>
+          <div class="match-reasons">
+            ${(job.match_reasons || []).map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}
+          </div>
+          ${authorization.evidence ? `<p class="authorization-evidence">${escapeHtml(authorization.evidence)}</p>` : ""}
+        </div>
+        <div class="workflow-job-actions">
+          <button data-action="workflow-tailor" data-job="${job.id}">Approve &amp; tailor</button>
+          <button data-action="workflow-job-decision" data-decision="${job.status === "maybe" ? "reconsider" : "maybe"}" data-job="${job.id}" class="secondary">${job.status === "maybe" ? "Move to new" : "Maybe"}</button>
+          <button data-action="workflow-job-decision" data-decision="reject" data-job="${job.id}" class="text-button">Reject</button>
+          <a href="${escapeHtml(job.url)}" target="_blank" rel="noreferrer">Open posting</a>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderWorkflowSubmitted(target, applications) {
+  if (!applications.length) {
+    target.innerHTML = `<div class="empty">Submitted applications will appear here.</div>`;
+    return;
+  }
+  target.innerHTML = applications.map((app) => `
+    <article class="workflow-submitted-row">
+      <div>
+        <strong>${escapeHtml(app.title)}</strong>
+        <p>${escapeHtml(app.company)}</p>
+      </div>
+      <div>
+        <span class="status">Submitted</span>
+        <small>${escapeHtml(app.updated_at)}</small>
+      </div>
+    </article>
+  `).join("");
+}
+
+function renderWorkflowAttention(data, tasks) {
+  const target = $("#workflowAttentionList");
+  const approvals = data.approvals?.items || [];
+  const taskAttention = tasks.filter(
+    (task) => ["checkpoint", "failed"].includes(task.status)
+  );
+  const writingAttention = data.applications.filter(
+    (app) => app.writing?.task?.status === "failed"
+  );
+  const total = approvals.length + taskAttention.length + writingAttention.length;
+  $("#workflowAttentionCount").textContent = `${total} item${total === 1 ? "" : "s"}`;
+  if (!total) {
+    target.innerHTML = `<div class="empty compact-empty">Nothing needs your attention.</div>`;
+    return;
+  }
+  const rows = [
+    ...approvals.slice(0, 4).map((item) => `
+      <button class="workflow-attention-row" data-action="readiness-open" data-view="approvals">
+        <span>${escapeHtml(item.title || "Approval required")}</span>
+        <small>${escapeHtml(item.priority || "normal")}</small>
+      </button>
+    `),
+    ...taskAttention.slice(0, 4).map((task) => `
+      <button class="workflow-attention-row" data-action="workflow-open-applying">
+        <span>${escapeHtml(task.message || "Application needs input")}</span>
+        <small>${escapeHtml(formatMode(task.checkpoint_kind || task.status))}</small>
+      </button>
+    `),
+    ...writingAttention.slice(0, 4).map((app) => `
+      <button class="workflow-attention-row" data-action="workflow-open-materials">
+        <span>${escapeHtml(app.title)} · writing failed</span>
+        <small>${escapeHtml(app.company)}</small>
+      </button>
+    `)
+  ];
+  target.innerHTML = rows.slice(0, 8).join("");
+}
+
+function renderWorkflow(data) {
+  const tasks = data.application_tasks || [];
+  const reviewJobs = data.jobs.filter((job) => ["new", "maybe"].includes(job.status));
+  const applyingApplications = data.applications.filter((app) => {
+    const task = latestTaskFor(app.id, tasks);
+    return task && ["queued", "running", "retry_wait", "checkpoint", "failed"].includes(task.status)
+      && app.status !== "submitted";
+  });
+  const materialApplications = data.applications.filter((app) => {
+    const task = latestTaskFor(app.id, tasks);
+    return app.status !== "submitted"
+      && !(task && ["queued", "running", "retry_wait", "checkpoint", "failed"].includes(task.status));
+  });
+  const submittedApplications = data.applications.filter(
+    (app) => app.status === "submitted"
+  );
+
+  $("#workflowJobCount").textContent = `${reviewJobs.length} waiting`;
+  $("#workflowMaterialCount").textContent = `${materialApplications.length} waiting`;
+  $("#workflowApplyingCount").textContent = `${applyingApplications.length} active`;
+  $("#workflowSubmittedCount").textContent = `${submittedApplications.length} complete`;
+  $("#workflowJobsTabCount").textContent = reviewJobs.length;
+  $("#workflowMaterialsTabCount").textContent = materialApplications.length;
+  $("#workflowApplyingTabCount").textContent = applyingApplications.length;
+  $("#workflowSubmittedTabCount").textContent = submittedApplications.length;
+
+  const preset = `${data.settings.posted_age_mode || "days"}:${
+    data.settings.posted_age_mode === "hours"
+      ? data.settings.posted_within_hours || "24"
+      : data.settings.posted_within_days || "3"
+  }`;
+  const presetSelect = $("#workflowAgePreset");
+  if ([...presetSelect.options].some((option) => option.value === preset)) {
+    presetSelect.value = preset;
+  }
+  $("#workflowUnknownDates").checked = data.settings.include_unknown_posted_at === "true";
+  $("#scanBtn").disabled = state.scanRunning;
+  $("#scanBtn").textContent = state.scanRunning ? "Scanning..." : "Scan now";
+
+  const scanMessage = $("#workflowScanMessage");
+  if (state.scanRunning) {
+    scanMessage.textContent = "Refreshing every enabled source.";
+  } else if (state.scanResult) {
+    const result = state.scanResult;
+    scanMessage.textContent = `${Number(result.inserted || 0)} new · ${Number(result.seen || 0)} refreshed · ${Number(result.filtered || 0)} filtered · ${Number(result.errors || 0)} errors`;
+  } else {
+    scanMessage.textContent = data.job_source_states.length
+      ? "Ready to refresh all enabled sources."
+      : "No source scan has completed yet.";
+  }
+
+  $("#workflowSourceProgress").innerHTML = (data.job_source_states || []).map((source) => {
+    const metadata = source.metadata || {};
+    return `
+      <div>
+        <span class="source-dot ${escapeHtml(source.status)}"></span>
+        <strong>${escapeHtml(metadata.provider_label || source.source_kind)}</strong>
+        <small>${Number(source.jobs_seen || 0)} checked · ${escapeHtml(source.status)}</small>
+      </div>
+    `;
+  }).join("") || `<span class="meta">Sources will appear after the first scan.</span>`;
+
+  $$(".workflow-tabs button").forEach((button) => {
+    const active = button.dataset.workflowTab === state.workflowTab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  const queue = $("#workflowQueueList");
+  if (state.workflowTab === "jobs") {
+    renderWorkflowJobs(queue, reviewJobs);
+  } else if (state.workflowTab === "materials") {
+    renderApplicationCards("#workflowQueueList", materialApplications, tasks);
+  } else if (state.workflowTab === "applying") {
+    renderApplicationCards("#workflowQueueList", applyingApplications, tasks);
+  } else {
+    renderWorkflowSubmitted(queue, submittedApplications);
+  }
+
+  renderWorkflowAttention(data, tasks);
+  const today = new Date().toDateString();
+  const submittedToday = submittedApplications.filter(
+    (app) => new Date(app.updated_at).toDateString() === today
+  ).length;
+  $("#workflowToday").innerHTML = `
+    <div><span>New matches</span><strong>${reviewJobs.length}</strong></div>
+    <div><span>Submitted</span><strong>${submittedToday}</strong></div>
+    <div><span>Daily target</span><strong>${Number(data.settings.daily_application_limit || 5)}</strong></div>
+  `;
 }
 
 function renderJobs(jobs) {
@@ -1022,7 +1212,11 @@ function renderBrowserRecovery(recovery) {
 }
 
 function renderApplications(apps, tasks) {
-  const target = $("#applicationsList");
+  renderApplicationCards("#applicationsList", apps, tasks);
+}
+
+function renderApplicationCards(selector, apps, tasks) {
+  const target = $(selector);
   if (!apps.length) {
     target.innerHTML = `<div class="empty">No application packages drafted yet.</div>`;
     return;
@@ -1048,6 +1242,13 @@ function renderApplications(apps, tasks) {
       .map((id) => evidence.get(String(id)))
       .filter(Boolean);
     const taskActive = ["queued", "running"].includes(writing.task?.status);
+    const browserActive = browserTask
+      && ["queued", "running", "retry_wait", "checkpoint"].includes(browserTask.status);
+    const materialsReady = compileStatus === "compiled"
+      && !taskActive
+      && ["codex", "manual"].includes(current.origin)
+      && validation.status !== "failed"
+      && app.status !== "submitted";
     const versionRows = (writing.versions || []).map((version) => `
       <div class="version-row">
         <span>v${version.version} · ${escapeHtml(version.origin)} · ${escapeHtml(version.validation?.status || version.status)}</span>
@@ -1136,8 +1337,7 @@ function renderApplications(apps, tasks) {
         ${app.resume_pdf_path ? `<a class="button-link" href="${artifactBase}&kind=pdf" target="_blank" rel="noreferrer">Open PDF</a>` : ""}
         ${app.resume_tex_path ? `<a class="button-link secondary" href="${artifactBase}&kind=tex">Download LaTeX</a>` : ""}
         <button data-action="compile" data-app="${app.id}" class="secondary">Recompile PDF</button>
-        <button data-action="approve" data-app="${app.id}">Approve</button>
-        <button data-action="apply" data-app="${app.id}" class="warn" ${browserTask && ["queued", "running", "checkpoint"].includes(browserTask.status) ? "disabled" : ""}>Apply</button>
+        <button data-action="approve-apply" data-app="${app.id}" class="warn" ${materialsReady && !browserActive ? "" : "disabled"}>Approve &amp; apply</button>
         <button data-action="submitted" data-app="${app.id}" class="secondary">Mark submitted</button>
       </div>
     </article>
@@ -1418,7 +1618,7 @@ function setView(view) {
   $$(".view").forEach((el) => el.classList.toggle("active", el.id === view));
   $$(".nav-item").forEach((el) => el.classList.toggle("active", el.dataset.view === view));
   const titles = {
-    overview: ["Overview", "Track documents, jobs, applications, and agent actions."],
+    overview: ["Workflow", "Scan, approve, tailor, apply, and repeat."],
     setup: ["Setup", "Verify local capabilities and choose a guarded operating policy."],
     documents: ["Documents", "Manage source files, extraction review, OCR, and profile evidence."],
     jobs: ["Jobs", "Scan broad providers, open assisted searches, and draft packages."],
@@ -1459,6 +1659,37 @@ async function handleAction(action, button) {
       }
     } else if (action === "readiness-open") {
       setView(button.dataset.view);
+    } else if (action === "workflow-open-materials") {
+      state.workflowTab = "materials";
+      setView("overview");
+    } else if (action === "workflow-open-applying") {
+      state.workflowTab = "applying";
+      setView("overview");
+    } else if (action === "workflow-job-decision") {
+      await api("/api/jobs/decision", {
+        method: "POST",
+        body: JSON.stringify({
+          job_id: Number(button.dataset.job),
+          decision: button.dataset.decision
+        })
+      });
+      toast(button.dataset.decision === "reject" ? "Job removed from the queue." : "Job decision saved.");
+    } else if (action === "workflow-tailor") {
+      const application = await api("/api/applications/draft", {
+        method: "POST",
+        body: JSON.stringify({ job_id: Number(button.dataset.job) })
+      });
+      try {
+        await api("/api/applications/writing/queue", {
+          method: "POST",
+          body: JSON.stringify({ application_id: Number(application.id) })
+        });
+        toast("Approved. Codex is tailoring the application package.");
+      } catch (error) {
+        toast(`Package created, but tailoring needs attention: ${error.message}`);
+      }
+      state.workflowTab = "materials";
+      setView("overview");
     } else if (action === "document-update") {
       const item = button.closest(".document-row");
       const result = await api("/api/documents/update", {
@@ -1529,6 +1760,22 @@ async function handleAction(action, button) {
         body: JSON.stringify({ application_id: Number(button.dataset.app) })
       });
       toast("Application approved.");
+    } else if (action === "approve-apply") {
+      if (!window.confirm("Approve these materials and authorize submission to the employer?")) return;
+      await api("/api/applications/approve", {
+        method: "POST",
+        body: JSON.stringify({ application_id: Number(button.dataset.app) })
+      });
+      const result = await api("/api/applications/apply", {
+        method: "POST",
+        body: JSON.stringify({
+          application_id: Number(button.dataset.app),
+          final_submit_approved: true
+        })
+      });
+      state.workflowTab = result.status === "blocked" ? "materials" : "applying";
+      setView("overview");
+      toast(result.message || "Approved materials queued for browser application.");
     } else if (action === "submitted") {
       await api("/api/applications/submit", {
         method: "POST",
@@ -1736,6 +1983,12 @@ function bindEvents() {
   $$(".nav-item").forEach((button) => {
     button.addEventListener("click", () => setView(button.dataset.view));
   });
+  $$(".workflow-tabs button").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.workflowTab = button.dataset.workflowTab;
+      renderWorkflow(state.data);
+    });
+  });
 
   $("#refreshBtn").addEventListener("click", loadState);
 
@@ -1842,15 +2095,32 @@ function bindEvents() {
 
   $("#scanBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
-    button.disabled = true;
+    const [mode, value] = $("#workflowAgePreset").value.split(":");
+    state.scanRunning = true;
+    renderWorkflow(state.data);
     try {
+      await api("/api/settings", {
+        method: "POST",
+        body: JSON.stringify({
+          posted_age_mode: mode,
+          posted_within_hours: mode === "hours" ? value : state.data.settings.posted_within_hours,
+          posted_within_days: mode === "days" ? value : state.data.settings.posted_within_days,
+          include_unknown_posted_at: $("#workflowUnknownDates").checked ? "true" : "false",
+          locations: "United States",
+          graduate_include_internships: "true",
+          graduate_max_required_experience_years: "3",
+          work_authorization_mode: "cpt_opt_future_sponsorship",
+          sponsorship_unknown_handling: "review"
+        })
+      });
       const result = await api("/api/jobs/scan", { method: "POST", body: "{}" });
+      state.scanResult = result;
       toast(`Scan complete: ${result.inserted} new, ${result.seen} refreshed, ${result.filtered} filtered, ${result.errors} errors, ${result.skipped || 0} rate-limited.`);
-      await loadState();
     } catch (error) {
       toast(error.message);
     } finally {
-      button.disabled = false;
+      state.scanRunning = false;
+      await loadState().catch((error) => toast(error.message));
     }
   });
 

@@ -56,6 +56,12 @@ def main() -> None:
         queued = automation.apply_application(int(app["id"]))
         assert queued["status"] == "queued"
         assert queued["adapter"] == "greenhouse"
+        assert queued["final_submit_approved"] == 0
+        authorized = automation.apply_application(
+            int(app["id"]),
+            final_submit_approved=True,
+        )
+        assert authorized["final_submit_approved"] == 1
 
         def unanswered_runner(_task: dict[str, object], _app: dict[str, object]) -> dict[str, object]:
             return {

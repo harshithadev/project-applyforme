@@ -699,19 +699,21 @@ def init_db() -> None:
                 "change_transformation,strategy_operations"
             ),
             "graduate_max_required_experience_years": "3",
-            "graduate_include_internships": "false",
+            "graduate_include_internships": "true",
+            "work_authorization_mode": "cpt_opt_future_sponsorship",
+            "sponsorship_unknown_handling": "review",
             "additional_title_aliases": "",
             "excluded_title_terms": (
                 "senior, principal, director, head of, vice president, "
                 "vp, chief, lead"
             ),
             "role_keywords": "software engineer, developer, full stack",
-            "locations": "",
-            "posted_age_mode": "days",
+            "locations": "United States",
+            "posted_age_mode": "hours",
             "posted_within_hours": "24",
-            "posted_within_days": "14",
-            "include_unknown_posted_at": "true",
-            "daily_application_limit": "10",
+            "posted_within_days": "3",
+            "include_unknown_posted_at": "false",
+            "daily_application_limit": "5",
             "daily_email_limit": "15",
             "scan_interval_minutes": "0",
             "max_jobs_per_source": "80",

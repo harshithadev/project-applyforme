@@ -34,6 +34,20 @@ def main() -> None:
                 page = browser.new_page(viewport={"width": 1440, "height": 1000})
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(base_url, wait_until="networkidle")
+                expect(page.locator("#viewTitle")).to_have_text("Workflow")
+                expect(page.locator("#scanBtn")).to_have_text("Scan now")
+                assert page.locator(".workflow-tabs button").count() == 4
+                assert page.locator("#workflowAgePreset option").count() == 6
+                workflow_scope = page.locator(".workflow-scope").inner_text()
+                assert "United States" in workflow_scope
+                assert "CPT/OPT" in workflow_scope
+                assert page.locator("#workflowQueueList").is_visible()
+                workflow_desktop = Path(tmp) / "workflow-desktop.png"
+                page.screenshot(path=str(workflow_desktop), full_page=True)
+                assert workflow_desktop.stat().st_size > 10_000
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth + 1"
+                )
                 page.locator("button[data-view='applications']").click()
                 registry_rows = page.locator(
                     "#adapterRegistryList .adapter-registry-row"
@@ -116,7 +130,7 @@ def main() -> None:
                 assert page.locator(
                     "input[name='graduate_max_required_experience_years']"
                 ).input_value() == "3"
-                assert not page.locator(
+                assert page.locator(
                     "input[name='graduate_include_internships']"
                 ).is_checked()
                 page.locator(
@@ -148,16 +162,12 @@ def main() -> None:
                 page.locator(
                     "input[name='graduate_include_internships']"
                 ).check()
-                assert page.locator(
-                    "input[name='posted_age_mode'][value='days']"
-                ).is_checked()
-                assert page.locator(
-                    "[data-posted-age-mode='days']"
-                ).is_visible()
-                assert page.locator(
-                    "[data-posted-age-mode='hours']"
-                ).is_hidden()
-                page.locator(".segmented-control span", has_text="Hours").click()
+                page.locator(
+                    "select[name='work_authorization_mode']"
+                ).select_option("cpt_opt_future_sponsorship")
+                page.locator(
+                    "select[name='sponsorship_unknown_handling']"
+                ).select_option("review")
                 assert page.locator(
                     "input[name='posted_age_mode'][value='hours']"
                 ).is_checked()
@@ -167,9 +177,19 @@ def main() -> None:
                 assert page.locator(
                     "[data-posted-age-mode='days']"
                 ).is_hidden()
-                assert page.locator(
+                assert not page.locator(
                     "input[name='include_unknown_posted_at']"
                 ).is_checked()
+                page.locator(
+                    ".segmented-control span", has_text="Calendar days"
+                ).click()
+                assert page.locator(
+                    "input[name='posted_age_mode'][value='days']"
+                ).is_checked()
+                assert page.locator(
+                    "[data-posted-age-mode='days']"
+                ).is_visible()
+                page.locator(".segmented-control span", has_text="Hours").click()
                 page.locator("input[name='posted_within_hours']").fill("6")
                 page.locator("input[name='include_unknown_posted_at']").uncheck()
                 page.locator(
@@ -188,6 +208,11 @@ def main() -> None:
                 assert setting("target_role_families") == "product,consulting"
                 assert setting("graduate_max_required_experience_years") == "1"
                 assert setting("graduate_include_internships") == "true"
+                assert (
+                    setting("work_authorization_mode")
+                    == "cpt_opt_future_sponsorship"
+                )
+                assert setting("sponsorship_unknown_handling") == "review"
                 assert (
                     setting("discovery_providers")
                     == "jobicy,weworkremotely,arbeitnow"
@@ -224,6 +249,14 @@ def main() -> None:
 
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.reload(wait_until="networkidle")
+                expect(page.locator("#viewTitle")).to_have_text("Workflow")
+                assert page.locator(".workflow-tabs button").count() == 4
+                workflow_mobile = Path(tmp) / "workflow-mobile.png"
+                page.screenshot(path=str(workflow_mobile), full_page=True)
+                assert workflow_mobile.stat().st_size > 10_000
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth + 1"
+                )
                 page.locator("button[data-view='applications']").click()
                 registry_rows.first.wait_for()
                 mobile = Path(tmp) / "dashboard-mobile.png"
